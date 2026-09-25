@@ -49,6 +49,8 @@ public final class Converter {
         public String titleHint;
         /** Produire l'archive .zip finale (mode sans dossier Chat2Doc). */
         public boolean makeZip = true;
+        /** Un document Word par année (sinon un seul document). */
+        public boolean splitByYear = true;
     }
 
     /** Export reçu : fichier de la discussion et nom. */
@@ -87,8 +89,10 @@ public final class Converter {
         public String title;
         public File folder;
         public File docx;
-        /** Nom du document Word dans le dossier de la discussion. */
+        /** Nom du document Word le plus récent dans le dossier de la discussion. */
         public String docxName;
+        /** Tous les documents Word de la discussion, et ceux qui ont été (re)créés. */
+        public List<String> volumes = new ArrayList<>(), rewritten = new ArrayList<>();
         public File zip;
         public DocxWriter.Stats stats;
         public int embeddedPictures;
@@ -106,6 +110,9 @@ public final class Converter {
     private static final String PREVIEW_DIR = Archive.STATE + "/apercus";
     /** Résumé de l'archive (titre, période, nombre de messages, date de mise à jour, nom du document). */
     public static final String SUMMARY = Archive.STATE + "/resume.tsv";
+    private static final String VOLUMES = Archive.STATE + "/volumes.tsv";
+    /** À augmenter quand la mise en page change, pour que les documents existants soient réécrits. */
+    private static final String FORMAT_VERSION = "1.4";
 
     private static final Pattern TITLE_PREFIX = Pattern.compile(
             "^(?:discussion whatsapp avec |whatsapp chat with |whatsapp chat - |whatsapp chat mit |whatsapp-chat mit "
@@ -311,19 +318,65 @@ public final class Converter {
             archive.writeTable(PREVIEW_INDEX, "adresse\tétat\ttitre\tsite\timage", rows);
         }
 
-        // Document Word
-        String docxName = p.safe + ".docx";
-        File docx = archive.file(docxName);
+        // Documents Word : un par année (ou un seul) ; seuls ceux dont le contenu a changé sont réécrits
+        Map<String, List<Message>> byVolume = new LinkedHashMap<>();
+        for (Message m : p.messages) {
+            String v = p.opt.splitByYear ? String.valueOf(m.time.getYear()) : "";
+            byVolume.computeIfAbsent(v, x -> new ArrayList<>()).add(m);
+        }
+        Map<String, String> oldPrints = new HashMap<>();
+        Set<String> oldDocs = new HashSet<>();
+        for (String[] row : archive.readTable(VOLUMES)) {
+            if (row.length >= 3) {
+                oldPrints.put(row[1], row[2]);
+                oldDocs.add(row[1]);
+            }
+        }
+        for (String[] row : archive.readTable(SUMMARY)) {
+            if (row.length >= 7) oldDocs.addAll(Arrays.asList(row[6].split("\\|"))); // version 1.3 : document unique
+        }
+
+        List<String> names = new ArrayList<>(), labels = new ArrayList<>();
+        for (String v : byVolume.keySet()) {
+            names.add(v.isEmpty() ? p.safe + ".docx" : p.safe + " - " + v + ".docx");
+            labels.add(v);
+        }
+        Map<String, String> colors = DocxWriter.colorsFor(p.messages);
         File tmp = new File(p.workDir, "docx-tmp");
-        Zips.deleteRecursively(tmp);
-        //noinspection ResultOfMethodCallIgnored
-        tmp.mkdirs();
         ThumbCache cache = new ThumbCache(archive);
-        DocxWriter writer = new DocxWriter(tmp, images, p.opt.imageMaxPx, archive, cache);
-        writer.write(docx, p.title, p.messages, p.media, previews, progress);
+        List<String> volumeRows = new ArrayList<>();
+        List<String[]> rowsVol = new ArrayList<>();
+        int embedded = 0, k = 0;
+        List<String> rewritten = new ArrayList<>();
+        for (Map.Entry<String, List<Message>> e : byVolume.entrySet()) {
+            String name = names.get(k), label = labels.get(k);
+            k++;
+            String print = fingerprint(e.getValue(), previews, p.opt.imageMaxPx, label, names);
+            rowsVol.add(new String[]{label, name, print, String.valueOf(countUser(e.getValue()))});
+            volumeRows.add(name);
+            boolean present = archive.isRemote() || archive.file(name).exists();
+            if (print.equals(oldPrints.get(name)) && present && oldDocs.contains(name)) {
+                embedded += countPictures(e.getValue(), p.media);
+                continue; // inchangé
+            }
+            if (progress.isCancelled()) throw new ProgressListener.CancelledException();
+            Zips.deleteRecursively(tmp);
+            //noinspection ResultOfMethodCallIgnored
+            tmp.mkdirs();
+            DocxWriter writer = new DocxWriter(tmp, images, p.opt.imageMaxPx, archive, cache);
+            writer.setColors(colors);
+            if (!label.isEmpty()) writer.setVolume(label, otherLabels(labels, label), p.safe);
+            writer.write(archive.file(name), p.title, e.getValue(), p.media, previews, progress);
+            embedded += writer.getEmbeddedPictures();
+            archive.markChanged(name);
+            rewritten.add(name);
+        }
         cache.save();
         Zips.deleteRecursively(tmp);
-        archive.markChanged(docxName);
+        for (String old : oldDocs) if (!volumeRows.contains(old)) archive.remove(old); // découpage modifié
+        archive.writeTable(VOLUMES, "volume\tdocument\tempreinte\tmessages", rowsVol);
+        String docxName = names.get(names.size() - 1);
+        File docx = archive.file(docxName);
 
         // Index des médias
         List<String[]> rows = new ArrayList<>();
@@ -336,7 +389,8 @@ public final class Converter {
         DocxWriter.Stats st = DocxWriter.computeStats(p.messages, p.media);
         List<String[]> summary = new ArrayList<>();
         summary.add(new String[]{p.title, st.first == null ? "" : st.first.toString(), st.last == null ? "" : st.last.toString(),
-                String.valueOf(st.messages), String.valueOf(p.exports), LocalDateTime.now().withNano(0).toString(), docxName});
+                String.valueOf(st.messages), String.valueOf(p.exports), LocalDateTime.now().withNano(0).toString(),
+                String.join("|", volumeRows)});
         archive.writeTable(SUMMARY, "titre\tpremier message\tdernier message\tmessages\texports\tmise à jour\tdocument", summary);
 
         Result r = new Result();
@@ -345,7 +399,9 @@ public final class Converter {
         r.docx = docx;
         r.docxName = docxName;
         r.stats = DocxWriter.computeStats(p.messages, p.media);
-        r.embeddedPictures = writer.getEmbeddedPictures();
+        r.embeddedPictures = embedded;
+        r.volumes = volumeRows;
+        r.rewritten = rewritten;
         r.mediaFiles = p.media.size();
         r.links = p.links.size();
         r.previews = 0;
@@ -365,6 +421,53 @@ public final class Converter {
     }
 
     // ------------------------------------------------------------------------------------------------
+
+    /** Autres volumes, pour la page de garde (« Les autres années : 2024, 2026 »). */
+    private static List<String> otherLabels(List<String> labels, String current) {
+        List<String> out = new ArrayList<>(labels);
+        out.remove(current);
+        return out;
+    }
+
+    private static int countPictures(List<Message> msgs, Map<String, MediaFile> media) {
+        int n = 0;
+        for (Message m : msgs) {
+            for (String a : m.attachments) {
+                MediaFile mf = media.get(a.toLowerCase(Locale.ROOT));
+                if (mf != null && mf.kind.isImage()) n++;
+            }
+        }
+        return n;
+    }
+
+    /** Empreinte du contenu d'un volume : s'il n'a pas changé, inutile de réécrire le document. */
+    private static String fingerprint(List<Message> msgs, Map<String, LinkPreviewFetcher.Preview> previews,
+                                      int maxPx, String label, List<String> allNames) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+            StringBuilder sb = new StringBuilder();
+            sb.append(FORMAT_VERSION).append('|').append(maxPx).append('|').append(label).append('|')
+                    .append(String.join(",", allNames)).append('\n');
+            for (Message m : msgs) {
+                sb.append(ChatMerge.key(m)).append('|').append(m.attachments).append('|')
+                        .append(m.mediaOmitted).append(m.deleted).append(m.edited).append('\n');
+                for (Links.Found f : Links.find(m.text)) {
+                    LinkPreviewFetcher.Preview pv = previews.get(f.url);
+                    if (pv != null) sb.append("L").append(f.url).append(pv.title).append(pv.site).append(pv.image != null).append('\n');
+                }
+                if (sb.length() > 1 << 16) {
+                    md.update(sb.toString().getBytes(StandardCharsets.UTF_8));
+                    sb.setLength(0);
+                }
+            }
+            md.update(sb.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : md.digest()) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return String.valueOf(System.nanoTime());
+        }
+    }
 
     private static int countUser(List<Message> msgs) {
         int n = 0;

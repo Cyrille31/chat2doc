@@ -79,6 +79,30 @@ public final class DocxWriter {
     private int nextPictureId = 1;
     private int embeddedPictures;
     private Map<String, LinkPreviewFetcher.Preview> previews = new HashMap<>();
+    private Map<String, String> presetColors;
+    private String volume, baseName;
+    private List<String> otherVolumes = new ArrayList<>();
+
+    /** Couleurs des participants, communes à tous les volumes d'une discussion. */
+    void setColors(Map<String, String> colors) {
+        this.presetColors = colors;
+    }
+
+    /** Ce document est le volume {@code label} (une année) ; les autres volumes sont cités en page de garde. */
+    void setVolume(String label, List<String> others, String baseName) {
+        this.volume = label;
+        this.otherVolumes = others;
+        this.baseName = baseName;
+    }
+
+    /** Une couleur par participant, dans l'ordre de première apparition dans toute la discussion. */
+    static Map<String, String> colorsFor(List<Message> msgs) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (Message x : msgs) {
+            if (x.sender != null && !m.containsKey(x.sender)) m.put(x.sender, PALETTE[m.size() % PALETTE.length]);
+        }
+        return m;
+    }
 
     private static final class Picture {
         final String relId;
@@ -153,7 +177,11 @@ public final class DocxWriter {
         Stats stats = computeStats(msgs, media);
         stats.links = Links.collect(msgs).size();
         int i = 0;
-        for (String sender : stats.perSender.keySet()) senderColors.put(sender, PALETTE[i++ % PALETTE.length]);
+        for (String sender : stats.perSender.keySet()) {
+            String c = presetColors != null ? presetColors.get(sender) : null;
+            senderColors.put(sender, c != null ? c : PALETTE[i % PALETTE.length]);
+            i++;
+        }
 
         File body = new File(tmpDir, "document.xml");
         try (Writer w = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(body), StandardCharsets.UTF_8), 1 << 16)) {
@@ -172,18 +200,19 @@ public final class DocxWriter {
         }
 
         progress.onProgress("Assemblage du document Word", 0, 0);
-        assemble(docx, body, title);
+        assemble(docx, body, volume != null ? title + " " + volume : title);
     }
 
     // ------------------------------------------------------------------------------------------------
 
     private void writeCover(Writer w, String title, Stats s) throws IOException {
-        para(w, "Title", "", run(title, ""));
+        para(w, "Title", "", run(volume != null ? title + " \u2014 " + volume : title, ""));
         if (s.first != null) {
             String period = s.first.toLocalDate().equals(s.last.toLocalDate())
                     ? "le " + dateFr(s.first.toLocalDate(), false)
                     : "du " + dateFr(s.first.toLocalDate(), false) + " au " + dateFr(s.last.toLocalDate(), false);
-            para(w, "C2DSubtitle", "", run("Discussion WhatsApp " + period, ""));
+            para(w, "C2DSubtitle", "", run((volume != null ? "Année " + volume + " \u00b7 " : "")
+                    + "Discussion WhatsApp " + period, ""));
         }
 
         List<String> parts = new ArrayList<>();
@@ -228,6 +257,14 @@ public final class DocxWriter {
                         + " dans la discussion ne figurai" + (s.missing.size() > 1 ? "ent" : "t")
                         + " pas dans l’export (média supprimé ou jamais téléchargé sur le téléphone).", ""));
             }
+        }
+
+        if (volume != null && !otherVolumes.isEmpty()) {
+            List<String> volumes = new ArrayList<>();
+            for (String v : otherVolumes) volumes.add(baseName + " - " + v + ".docx");
+            para(w, "C2DCoverHeading", "", run("Autres années", ""));
+            para(w, "C2DNote", "", run("Chaque année a son propre document, dans le même dossier : "
+                    + String.join(", ", volumes) + ".", ""));
         }
 
         para(w, "C2DNote", "<w:spacing w:before=\"480\"/>",

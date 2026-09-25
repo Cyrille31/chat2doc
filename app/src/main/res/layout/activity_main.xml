@@ -166,6 +166,14 @@
                 android:text="@string/quality_note"
                 android:textColor="@color/text_soft"
                 android:textSize="13sp" />
+
+            <CheckBox
+                android:id="@+id/split_year"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:minHeight="44dp"
+                android:text="@string/split_year" />
         </LinearLayout>
 
         <!-- Conversion en cours -->

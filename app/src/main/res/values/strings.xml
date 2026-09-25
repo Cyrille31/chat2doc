@@ -17,6 +17,7 @@
     <string name="quality_small">Compactes (800 px) — document léger</string>
     <string name="quality_standard">Standard (1280 px) — recommandé</string>
     <string name="quality_original">Taille d’origine — document lourd</string>
+    <string name="split_year">Un document Word par année (conseillé pour les longues discussions : fichiers plus légers)</string>
     <string name="quality_note">Dans tous les cas, les photos originales sont conservées dans le dossier « Photos » de l’archive.</string>
 
     <string name="progress_title">Conversion en cours</string>

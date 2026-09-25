@@ -21,6 +21,7 @@ import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RadioGroup;
@@ -65,6 +66,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FOLDER = 3;
     private static final String PREFS = "chat2doc";
     private static final String PREF_QUALITY = "qualite_photos";
+    private static final String PREF_SPLIT = "un_document_par_annee";
     private static final int[] QUALITY_PX = {800, 1280, 0};
     private static final String GITHUB = "https://github.com/Cyrille31/chat2doc";
     private static final DateTimeFormatter HOUR = DateTimeFormatter.ofPattern("HH:mm", Locale.FRENCH);
@@ -76,6 +78,7 @@ public class MainActivity extends Activity {
     private TextView stage, progressDetail, summary, error;
     private ProgressBar progress;
     private RadioGroup quality;
+    private CheckBox splitYear;
     private Button cancelButton, folderChoose, folderForget, saveButton;
     private TextView folderStatus, savedTitle;
     private LinearLayout savedList;
@@ -106,12 +109,15 @@ public class MainActivity extends Activity {
         error = findViewById(R.id.error);
         progress = findViewById(R.id.progress);
         quality = findViewById(R.id.quality);
+        splitYear = findViewById(R.id.split_year);
 
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         int q = prefs.getInt(PREF_QUALITY, 1);
         quality.check(q == 0 ? R.id.quality_small : q == 2 ? R.id.quality_original : R.id.quality_standard);
         quality.setOnCheckedChangeListener((group, id) -> prefs.edit().putInt(PREF_QUALITY,
                 id == R.id.quality_small ? 0 : id == R.id.quality_original ? 2 : 1).apply());
+        splitYear.setChecked(prefs.getBoolean(PREF_SPLIT, true));
+        splitYear.setOnCheckedChangeListener((b, checked) -> prefs.edit().putBoolean(PREF_SPLIT, checked).apply());
 
         findViewById(R.id.pick_zip).setOnClickListener(v -> pickZip());
         cancelButton = findViewById(R.id.cancel);
@@ -243,6 +249,7 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         final int px = QUALITY_PX[qualityIndex()];
+        final boolean split = splitYear.isChecked();
         final ProgressListener listener = new UiProgress();
 
         worker.execute(() -> {
@@ -265,6 +272,7 @@ public class MainActivity extends Activity {
 
                 Converter.Options opt = new Converter.Options();
                 opt.imageMaxPx = px;
+                opt.splitByYear = split;
                 opt.titleHint = hint;
                 opt.dayFirstByDefault = !Locale.getDefault().getCountry().equals("US");
                 Converter.Inspection ins = Converter.inspect(in, opt);
@@ -496,11 +504,21 @@ public class MainActivity extends Activity {
         sb.append(".");
         if (r.update) {
             sb.append("\n").append(r.newMessages > 0 ? "Mise à jour : " + count(r.newMessages, "nouveau message", "nouveaux messages")
-                    : "Aucun nouveau message depuis la dernière fois").append(" (").append(count(r.exports, "export", "exports"))
-                    .append(" réunis).");
+                    : "Aucun nouveau message depuis la dernière fois")
+                    .append(r.exports > 1 ? " (" + count(r.exports, "export", "exports") + " réunis)." : ".");
         }
         sb.append("\n\n");
-        sb.append(count(r.embeddedPictures, "photo insérée", "photos insérées")).append(" dans le document Word, ")
+        if (r.volumes.size() > 1) {
+            List<String> years = new ArrayList<>();
+            for (String v : r.rewritten) years.add(v.replaceAll("^.* - (\\d{4})\\.docx$", "$1"));
+            sb.append(r.volumes.size()).append(" documents Word, un par année");
+            if (r.update && !years.isEmpty() && years.size() < r.volumes.size()) {
+                sb.append(" (mis à jour : ").append(String.join(", ", years)).append(")");
+            }
+            sb.append(".\n");
+        }
+        sb.append(count(r.embeddedPictures, "photo insérée", "photos insérées")).append(" dans ")
+                .append(r.volumes.size() > 1 ? "les documents Word, " : "le document Word, ")
                 .append(count(r.mediaFiles, "média rangé", "médias rangés")).append(" dans l’archive.");
         if (!r.stats.missing.isEmpty()) {
             sb.append("\n").append(count(r.stats.missing.size(), "fichier cité est absent", "fichiers cités sont absents"))
@@ -654,6 +672,29 @@ public class MainActivity extends Activity {
     // ================================================================================================
     // Dossier Chat2Doc
 
+    /** Ouvre le document d'une discussion enregistrée ; s'il y en a un par année, demande lequel. */
+    private void openSaved(Library.Entry e, List<Uri> docs) {
+        if (docs.size() == 1) {
+            if (docs.get(0) != null) openDocument(docs.get(0));
+            else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] labels = new String[docs.size()];
+        for (int k = 0; k < docs.size(); k++) {
+            String n = e.docxNames.get(docs.size() - 1 - k);
+            labels[k] = n.replaceAll("(?i)\\.docx$", "");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(e.title)
+                .setItems(labels, (d, which) -> {
+                    Uri u = docs.get(docs.size() - 1 - which);
+                    if (u != null) openDocument(u);
+                    else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Annuler", null)
+                .show();
+    }
+
     private void chooseFolder() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -686,13 +727,13 @@ public class MainActivity extends Activity {
             Library lib = Library.open(this);
             String name = lib == null ? null : lib.name();
             List<Library.Entry> entries = lib == null ? new ArrayList<>() : lib.entries();
-            List<Uri> docs = new ArrayList<>();
-            for (Library.Entry e : entries) docs.add(lib.documentUri(e));
+            List<List<Uri>> docs = new ArrayList<>();
+            for (Library.Entry e : entries) docs.add(lib.documentUris(e));
             ui.post(() -> showLibrary(chosen, name, entries, docs));
         });
     }
 
-    private void showLibrary(boolean chosen, String name, List<Library.Entry> entries, List<Uri> docs) {
+    private void showLibrary(boolean chosen, String name, List<Library.Entry> entries, List<List<Uri>> docs) {
         if (isFinishing() || isDestroyed()) return;
         if (name != null) {
             folderStatus.setText("Dossier « " + name + " » : chaque discussion y est conservée et complétée à chaque "
@@ -713,7 +754,7 @@ public class MainActivity extends Activity {
         float dp = getResources().getDisplayMetrics().density;
         for (int k = 0; k < entries.size(); k++) {
             Library.Entry e = entries.get(k);
-            Uri doc = docs.get(k);
+            List<Uri> doc = docs.get(k);
             TextView tv = new TextView(this);
             StringBuilder t = new StringBuilder(e.title);
             if (e.first != null && e.last != null) {
@@ -721,6 +762,7 @@ public class MainActivity extends Activity {
                         .append(DocxWriter.dateFr(e.last.toLocalDate(), false));
             }
             t.append("\n").append(count(e.messages, "message", "messages"));
+            if (e.docxNames.size() > 1) t.append(" · ").append(e.docxNames.size()).append(" documents (un par année)");
             if (e.updated != null) {
                 t.append(" · mis à jour le ").append(DocxWriter.dateFr(e.updated.toLocalDate(), false))
                         .append(" à ").append(HOUR.format(e.updated));
@@ -738,10 +780,7 @@ public class MainActivity extends Activity {
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             lp.topMargin = (int) (8 * dp);
             tv.setLayoutParams(lp);
-            tv.setOnClickListener(v -> {
-                if (doc != null) openDocument(doc);
-                else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
-            });
+            tv.setOnClickListener(v -> openSaved(e, doc));
             savedList.addView(tv);
         }
     }

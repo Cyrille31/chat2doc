@@ -21,7 +21,8 @@ Une archive `.zip` qui contient :
 
 ```
 Famille été 2026/
-├── Famille été 2026.docx      ← la discussion mise en page
+├── Famille été 2026 - 2025.docx  ← la discussion mise en page, un document par année
+├── Famille été 2026 - 2026.docx
 ├── Photos/                    ← photos et autocollants, en taille d'origine
 ├── Videos/
 ├── Audio/                     ← messages vocaux et fichiers audio
@@ -84,6 +85,20 @@ discussion, exportez-la **sans les médias** puis **avec les médias**, et parta
 Chat2Doc : les messages anciens (sans photos) et récents (avec photos) sont réunis dans un seul
 document. Sans dossier Chat2Doc, l'appli propose cette fusion quand deux exports de la même
 discussion se suivent. Elle signale aussi un export qui semble tronqué par WhatsApp.
+
+### Un document Word par année
+
+Par défaut, Chat2Doc écrit **un document par année** (`Famille - 2025.docx`, `Famille - 2026.docx`…) :
+des fichiers plus légers, plus rapides à ouvrir, surtout sur téléphone. Chaque document a sa page
+de garde et cite les autres années. Avec un dossier Chat2Doc, seul le document de l'année qui a
+changé est réécrit lors d'une mise à jour. La case *Un document Word par année* permet de revenir
+à un document unique.
+
+### Réactions (émojis sous les messages)
+
+WhatsApp n'inclut pas les réactions (👍, ❤️… ajoutés sous un message) dans ses exports : elles ne
+peuvent donc pas apparaître dans le document. Les émojis écrits dans le texte des messages sont,
+eux, bien conservés.
 
 ### Aperçus des liens
 

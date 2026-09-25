@@ -82,6 +82,18 @@ public final class Archive {
 
     public void markChanged(String rel) {
         changed.add(rel);
+        removed.remove(rel);
+    }
+
+    /** Fichiers à supprimer de l'archive de référence (chemins relatifs). */
+    public final Set<String> removed = new LinkedHashSet<>();
+
+    /** Supprime un fichier de l'archive (localement, et de l'archive de référence lors de la recopie). */
+    public void remove(String rel) {
+        //noinspection ResultOfMethodCallIgnored
+        file(rel).delete();
+        changed.remove(rel);
+        removed.add(rel);
     }
 
     public static String rel(String... parts) {

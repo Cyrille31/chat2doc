@@ -43,7 +43,9 @@ final class Library {
 
     /** Une discussion enregistrée. */
     static final class Entry {
-        String folder, title, docxName;
+        String folder, title;
+        /** Documents Word de la discussion (un par année, ou un seul), du plus ancien au plus récent. */
+        List<String> docxNames = new ArrayList<>();
         LocalDateTime first, last, updated;
         int messages, exports;
         Node dir;
@@ -151,7 +153,7 @@ final class Library {
                     e.messages = Integer.parseInt(c[3]);
                     e.exports = Integer.parseInt(c[4]);
                     e.updated = parse(c[5]);
-                    e.docxName = c[6];
+                    for (String d : c[6].split("\\|")) if (!d.isEmpty()) e.docxNames.add(d);
                     e.dir = dir;
                     out.add(e);
                     break;
@@ -167,9 +169,14 @@ final class Library {
         return out;
     }
 
-    Uri documentUri(Entry e) {
-        Node f = child(e.dir, e.folder, e.docxName);
-        return f == null ? null : f.uri;
+    /** Adresses des documents Word de la discussion (null pour un document introuvable). */
+    List<Uri> documentUris(Entry e) {
+        List<Uri> out = new ArrayList<>();
+        for (String d : e.docxNames) {
+            Node f = child(e.dir, e.folder, d);
+            out.add(f == null ? null : f.uri);
+        }
+        return out;
     }
 
     private static LocalDateTime parse(String s) {
@@ -244,6 +251,21 @@ final class Library {
                 byte[] buf = new byte[1 << 16];
                 int r;
                 while ((r = is.read(buf)) > 0) os.write(buf, 0, r);
+            }
+        }
+        // Documents devenus inutiles (par exemple après un changement de découpage)
+        for (String rel : archive.removed) {
+            String full = folder + "/" + rel;
+            int slash = full.lastIndexOf('/');
+            Node parent = resolve(full.substring(0, slash), false);
+            if (parent == null) continue;
+            Node target = child(parent, full.substring(0, slash), full.substring(slash + 1));
+            if (target == null) continue;
+            try {
+                DocumentsContract.deleteDocument(ctx.getContentResolver(), target.uri);
+                listing(parent, full.substring(0, slash)).remove(target.name);
+            } catch (Exception ignored) {
+                // suppression impossible : le document reste, sans gravité
             }
         }
         progress.onProgress("Enregistrement dans le dossier Chat2Doc", total, total);
