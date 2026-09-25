@@ -20,6 +20,7 @@ import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -40,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -48,6 +50,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import fr.cgexcel.chat2doc.core.ChatParser;
 import fr.cgexcel.chat2doc.core.Converter;
+import fr.cgexcel.chat2doc.core.LinkPreviewFetcher;
 import fr.cgexcel.chat2doc.core.ProgressListener;
 import fr.cgexcel.chat2doc.core.Zips;
 
@@ -68,8 +71,12 @@ public class MainActivity extends Activity {
     private TextView stage, progressDetail, summary, error;
     private ProgressBar progress;
     private RadioGroup quality;
+    private Button cancelButton;
 
     private volatile boolean cancelled;
+    /** Récupération des aperçus en cours, et demande de l'utilisateur d'ignorer les aperçus restants. */
+    private volatile boolean fetchingPreviews, skipPreviews;
+    private static boolean previewsRequested;
     private boolean busy;
     private Converter.Result result;
 
@@ -98,9 +105,15 @@ public class MainActivity extends Activity {
                 id == R.id.quality_small ? 0 : id == R.id.quality_original ? 2 : 1).apply());
 
         findViewById(R.id.pick_zip).setOnClickListener(v -> pickZip());
-        findViewById(R.id.cancel).setOnClickListener(v -> {
-            cancelled = true;
-            stage.setText("Annulation…");
+        cancelButton = findViewById(R.id.cancel);
+        cancelButton.setOnClickListener(v -> {
+            if (fetchingPreviews) {
+                skipPreviews = true;
+                stage.setText("Aperçus restants ignorés, suite de la conversion…");
+            } else {
+                cancelled = true;
+                stage.setText("Annulation…");
+            }
         });
         findViewById(R.id.save).setOnClickListener(v -> save());
         findViewById(R.id.share).setOnClickListener(v -> share());
@@ -237,8 +250,62 @@ public class MainActivity extends Activity {
                 opt.imageMaxPx = px;
                 opt.titleHint = hint;
                 opt.dayFirstByDefault = !Locale.getDefault().getCountry().equals("US");
-                Converter.Result r = Converter.convert(in, out, tmp, opt, new AndroidImageProcessor(), listener);
+                Converter.Prepared prepared = Converter.prepare(in, out, tmp, opt, listener);
                 Zips.deleteRecursively(in);
+                ui.post(() -> askPreviews(prepared, tmp, listener));
+            } catch (ProgressListener.CancelledException e) {
+                ui.post(() -> finished(null, "Conversion annulée."));
+            } catch (Throwable t) {
+                ui.post(() -> finished(null, describe(t)));
+            }
+        });
+    }
+
+    /** Discussion lue : s'il y a des liens, on propose d'aller chercher leurs aperçus, avec une estimation de durée. */
+    private void askPreviews(Converter.Prepared p, File tmp, ProgressListener listener) {
+        previewsRequested = false;
+        if (p.links.isEmpty() || isFinishing() || isDestroyed()) {
+            finishConversion(p, false, tmp, listener);
+            return;
+        }
+        int n = p.links.size();
+        StringBuilder msg = new StringBuilder();
+        msg.append("Cette discussion contient ").append(count(n, "lien", "liens")).append(" vers des sites web");
+        if (p.youtubeLinks > 0) {
+            msg.append(p.youtubeLinks == n ? " (" + (n > 1 ? "toutes des vidéos" : "une vidéo") + " YouTube)"
+                    : ", dont " + count(p.youtubeLinks, "vidéo", "vidéos") + " YouTube");
+        }
+        msg.append(".\n\nChat2Doc peut récupérer sur Internet leur aperçu (titre et image), comme dans WhatsApp.\n\n")
+                .append("Durée estimée : ").append(LinkPreviewFetcher.describeDuration(LinkPreviewFetcher.estimateSeconds(n)))
+                .append(" (selon la connexion ; le Wi-Fi est conseillé).\n\n")
+                .append("Sans aperçus, les liens restent cliquables dans le document.");
+        new AlertDialog.Builder(this)
+                .setTitle("Aperçus des liens")
+                .setMessage(msg.toString())
+                .setCancelable(false)
+                .setPositiveButton("Récupérer les aperçus", (d, w) -> finishConversion(p, true, tmp, listener))
+                .setNegativeButton("Continuer sans", (d, w) -> finishConversion(p, false, tmp, listener))
+                .show();
+    }
+
+    private void finishConversion(Converter.Prepared p, boolean withPreviews, File tmp, ProgressListener listener) {
+        previewsRequested = withPreviews;
+        skipPreviews = false;
+        worker.execute(() -> {
+            try {
+                Map<String, LinkPreviewFetcher.Preview> previews = null;
+                if (withPreviews) {
+                    fetchingPreviews = true;
+                    ui.post(() -> cancelButton.setText("Ignorer les aperçus restants"));
+                    try {
+                        previews = new LinkPreviewFetcher().fetchAll(p.links, new File(tmp, "apercus"), listener,
+                                () -> skipPreviews);
+                    } finally {
+                        fetchingPreviews = false;
+                        ui.post(() -> cancelButton.setText(R.string.cancel));
+                    }
+                }
+                Converter.Result r = Converter.finish(p, previews, new AndroidImageProcessor(), listener);
                 Zips.deleteRecursively(tmp);
                 ui.post(() -> finished(r, null));
             } catch (ProgressListener.CancelledException e) {
@@ -341,6 +408,12 @@ public class MainActivity extends Activity {
         if (r.stats.omitted > 0) {
             sb.append("\n").append(count(r.stats.omitted, "média n’a pas été fourni", "médias n’ont pas été fournis"))
                     .append(" par WhatsApp (export sans les médias ?).");
+        }
+        if (r.links > 0) {
+            sb.append("\n").append(count(r.links, "lien", "liens"));
+            if (r.previews > 0) sb.append(", dont ").append(count(r.previews, "avec aperçu", "avec aperçu"));
+            else if (previewsRequested) sb.append(" : aucun aperçu obtenu (pas de connexion Internet ?)");
+            sb.append(".");
         }
         if (r.zip != null) {
             sb.append("\n\nArchive : ").append(r.zip.getName()).append(" (").append(size(r.zip.length())).append(")");
@@ -464,6 +537,7 @@ public class MainActivity extends Activity {
         error.setVisibility(View.GONE);
         working.setVisibility(View.VISIBLE);
         stage.setText("Préparation…");
+        cancelButton.setText(R.string.cancel);
         progressDetail.setText("");
         progress.setIndeterminate(true);
     }

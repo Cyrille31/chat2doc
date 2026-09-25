@@ -27,8 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -61,7 +59,10 @@ public final class DocxWriter {
     private static final double PHOTO_MAX_W = 7.0, PHOTO_MAX_H = 8.0, STICKER_MAX = 3.2;
     private static final long EMU_PER_CM = 360000L;
 
-    private static final Pattern URL = Pattern.compile("(?i)\\b(?:https?://|www\\.)[^\\s<>\"]+");
+    /** Cadre de la vignette d'un aperçu de lien, en centimètres, et sa définition en pixels. */
+    private static final double PREVIEW_MAX_W = 5.0, PREVIEW_MAX_H = 3.2;
+    private static final int PREVIEW_PX = 480;
+    private static final String PREVIEW_FILL = "F1F4FA";
 
     private final File tmpDir;
     private final ImageProcessor images;
@@ -76,6 +77,7 @@ public final class DocxWriter {
     private int nextRelId = 10;
     private int nextPictureId = 1;
     private int embeddedPictures;
+    private Map<String, LinkPreviewFetcher.Preview> previews = new HashMap<>();
 
     private static final class Picture {
         final String relId;
@@ -96,6 +98,7 @@ public final class DocxWriter {
         public final List<String> missing = new ArrayList<>();
         public int omitted;
         public LocalDateTime first, last;
+        public int links;
     }
 
     /**
@@ -142,8 +145,10 @@ public final class DocxWriter {
     // ================================================================================================
 
     public void write(File docx, String title, List<Message> msgs, Map<String, MediaFile> media,
-                      ProgressListener progress) throws IOException {
+                      Map<String, LinkPreviewFetcher.Preview> previews, ProgressListener progress) throws IOException {
+        this.previews = previews == null ? new HashMap<>() : previews;
         Stats stats = computeStats(msgs, media);
+        stats.links = Links.collect(msgs).size();
         int i = 0;
         for (String sender : stats.perSender.keySet()) senderColors.put(sender, PALETTE[i++ % PALETTE.length]);
 
@@ -193,6 +198,7 @@ public final class DocxWriter {
         if (docs > 0) parts.add(plural(docs, "document", "documents"));
         int stickers = count(s, MediaKind.STICKER);
         if (stickers > 0) parts.add(plural(stickers, "autocollant", "autocollants"));
+        if (s.links > 0) parts.add(plural(s.links, "lien", "liens"));
         para(w, "C2DStats", "", run(String.join(" · ", parts), ""));
 
         if (!s.perSender.isEmpty()) {
@@ -282,34 +288,48 @@ public final class DocxWriter {
             lastSender = m.sender;
             lastTime = m.time;
 
-            // Contenu : pièces jointes puis texte ; l'heure est ajoutée à la fin du dernier paragraphe
+            // Contenu : pièces jointes, texte, aperçus des liens ; l'heure suit le texte (ou le dernier élément)
+            String border = "<w:pBdr><w:left w:val=\"single\" w:sz=\"8\" w:space=\"7\" w:color=\"" + color + "\"/></w:pBdr>";
+            String card = "<w:pBdr><w:left w:val=\"single\" w:sz=\"8\" w:space=\"7\" w:color=\"" + color + "\"/></w:pBdr>"
+                    + "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"" + PREVIEW_FILL + "\"/>";
             List<String> bodies = new ArrayList<>();
+            List<String> pprs = new ArrayList<>();
             for (String att : m.attachments) {
                 MediaFile mf = media.get(att.toLowerCase(Locale.ROOT));
                 if (mf == null) {
                     bodies.add(run("Fichier absent de l’export : " + att, "<w:i/><w:color w:val=\"" + GREY + "\"/>"));
+                    pprs.add(border);
+                    continue;
                 } else if (mf.kind.isImage()) {
                     String drawing = picture(mf);
                     bodies.add(drawing != null ? drawing : mediaLink(mf));
                 } else {
                     bodies.add(mediaLink(mf));
                 }
+                pprs.add(border);
             }
             if (m.mediaOmitted) {
                 bodies.add(run("Média non inclus dans l’export", "<w:i/><w:color w:val=\"" + GREY + "\"/>"));
+                pprs.add(border);
             }
+            int stampAt = -1;
             if (!m.text.isEmpty()) {
                 String rpr = m.deleted ? "<w:i/><w:color w:val=\"" + GREY + "\"/>" : "";
                 bodies.add(textWithLinks(m.text, rpr));
+                pprs.add(border);
+                stampAt = bodies.size() - 1;
+                addPreviews(m.text, bodies, pprs, card);
             }
             String stamp = (m.edited ? "  modifié " : "  ") + time;
-            if (bodies.isEmpty()) bodies.add("");
-            int last = bodies.size() - 1;
-            bodies.set(last, bodies.get(last) + run(" " + stamp.trim(),
+            if (bodies.isEmpty()) {
+                bodies.add("");
+                pprs.add(border);
+            }
+            if (stampAt < 0) stampAt = bodies.size() - 1;
+            bodies.set(stampAt, bodies.get(stampAt) + run(" " + stamp.trim(),
                     "<w:color w:val=\"" + GREY + "\"/><w:sz w:val=\"15\"/>"));
 
-            String border = "<w:pBdr><w:left w:val=\"single\" w:sz=\"18\" w:space=\"8\" w:color=\"" + color + "\"/></w:pBdr>";
-            for (String b : bodies) para(w, "C2DText", border, b);
+            for (int b = 0; b < bodies.size(); b++) para(w, "C2DText", pprs.get(b), bodies.get(b));
         }
         progress.onProgress("Mise en page de la discussion", total, total);
     }
@@ -346,21 +366,50 @@ public final class DocxWriter {
 
     /** Texte avec les adresses web transformées en liens cliquables. */
     private String textWithLinks(String text, String rPr) {
-        Matcher m = URL.matcher(text);
         StringBuilder sb = new StringBuilder();
         int pos = 0;
-        while (m.find()) {
-            int end = m.end();
-            while (end > m.start() && ".,;:!?)]}»’'".indexOf(text.charAt(end - 1)) >= 0) end--;
-            String url = text.substring(m.start(), end);
-            if (m.start() > pos) sb.append(run(text.substring(pos, m.start()), rPr));
-            String target = url.toLowerCase(Locale.ROOT).startsWith("www.") ? "http://" + url : url;
-            sb.append("<w:hyperlink r:id=\"").append(linkRel(target)).append("\" w:history=\"1\">")
-                    .append(run(url, "<w:rStyle w:val=\"Hyperlink\"/>")).append("</w:hyperlink>");
-            pos = end;
+        for (Links.Found f : Links.find(text)) {
+            if (f.start > pos) sb.append(run(text.substring(pos, f.start), rPr));
+            sb.append("<w:hyperlink r:id=\"").append(linkRel(f.url)).append("\" w:history=\"1\">")
+                    .append(run(f.shown, "<w:rStyle w:val=\"Hyperlink\"/>")).append("</w:hyperlink>");
+            pos = f.end;
         }
         if (pos < text.length()) sb.append(run(text.substring(pos), rPr));
         return sb.toString();
+    }
+
+    /** Aperçus des liens du message (vignette, titre, site), comme dans WhatsApp. */
+    private void addPreviews(String text, List<String> bodies, List<String> pprs, String card) throws IOException {
+        List<String> seen = new ArrayList<>();
+        for (Links.Found f : Links.find(text)) {
+            LinkPreviewFetcher.Preview p = previews.get(f.url);
+            if (p == null || seen.contains(f.url)) continue;
+            seen.add(f.url);
+            boolean hasImage = false;
+            if (p.image != null) {
+                String img = pictureOf(p.image, "lien:" + p.url, p.site != null ? p.site : "Aperçu du lien",
+                        PREVIEW_MAX_W, PREVIEW_MAX_H, p.url, PREVIEW_PX);
+                if (img != null) {
+                    bodies.add(img);
+                    pprs.add(card + "<w:spacing w:before=\"60\" w:after=\"0\"/>");
+                    hasImage = true;
+                }
+            }
+            StringBuilder t = new StringBuilder();
+            if (p.title != null) {
+                t.append("<w:hyperlink r:id=\"").append(linkRel(p.url)).append("\" w:history=\"1\">")
+                        .append(run(p.title, "<w:b/><w:color w:val=\"" + BRAND_BLUE + "\"/><w:sz w:val=\"20\"/>"))
+                        .append("</w:hyperlink>");
+            }
+            if (p.site != null) {
+                if (t.length() > 0) t.append("<w:r><w:br/></w:r>");
+                t.append(run(p.site, "<w:color w:val=\"" + GREY + "\"/><w:sz w:val=\"16\"/>"));
+            }
+            if (t.length() > 0) {
+                bodies.add(t.toString());
+                pprs.add(card + "<w:spacing w:before=\"" + (hasImage ? 0 : 60) + "\" w:after=\"100\"/>");
+            }
+        }
     }
 
     /** Lien vers un média rangé dans l'archive (vidéo, message vocal, document...). */
@@ -380,12 +429,20 @@ public final class DocxWriter {
 
     /** Photo insérée dans le fil ; un clic ouvre l'original. Renvoie null si l'image n'est pas lisible. */
     private String picture(MediaFile mf) throws IOException {
-        String key = mf.relativePath;
+        boolean sticker = mf.kind == MediaKind.STICKER;
+        return pictureOf(mf.file, mf.relativePath, mf.name,
+                sticker ? STICKER_MAX : PHOTO_MAX_W, sticker ? STICKER_MAX : PHOTO_MAX_H,
+                relativeUrl(mf.relativePath), imageMaxPx);
+    }
+
+    /** Image insérée dans le fil, cliquable vers {@code linkTarget}. Renvoie null si l'image n'est pas lisible. */
+    private String pictureOf(File file, String key, String label, double maxW, double maxH,
+                             String linkTarget, int maxPx) throws IOException {
         Picture pic = pictures.get(key);
         if (pic == null) {
             ImageProcessor.Result r;
             try {
-                r = images.process(mf.file, imageMaxPx);
+                r = images.process(file, maxPx);
             } catch (IOException | RuntimeException | OutOfMemoryError e) {
                 r = null;
             }
@@ -402,18 +459,16 @@ public final class DocxWriter {
                     .append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"")
                     .append(entry).append("\"/>");
 
-            double maxW = mf.kind == MediaKind.STICKER ? STICKER_MAX : PHOTO_MAX_W;
-            double maxH = mf.kind == MediaKind.STICKER ? STICKER_MAX : PHOTO_MAX_H;
             double naturalW = r.width / 96.0 * 2.54, naturalH = r.height / 96.0 * 2.54;
             double k = Math.min(1.0, Math.min(maxW / naturalW, maxH / naturalH));
             pic = new Picture(relId, Math.round(naturalW * k * EMU_PER_CM), Math.round(naturalH * k * EMU_PER_CM));
             pictures.put(key, pic);
-            embeddedPictures++;
+            if (!key.startsWith("lien:")) embeddedPictures++;
         }
 
         int id = nextPictureId++;
-        String link = linkRel(relativeUrl(mf.relativePath));
-        String name = xml(mf.name);
+        String link = linkRel(linkTarget);
+        String name = xml(label);
         return "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">"
                 + "<wp:extent cx=\"" + pic.cx + "\" cy=\"" + pic.cy + "\"/>"
                 + "<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"
@@ -552,13 +607,13 @@ public final class DocxWriter {
                 .append("<w:spacing w:before=\"480\" w:after=\"120\"/><w:outlineLvl w:val=\"0\"/></w:pPr>")
                 .append("<w:rPr><w:rFonts w:ascii=\"Calibri Light\" w:hAnsi=\"Calibri Light\"/><w:color w:val=\"" + BRAND_BLUE + "\"/><w:sz w:val=\"34\"/><w:szCs w:val=\"34\"/></w:rPr></w:style>");
         s.append("<w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:qFormat/>")
-                .append("<w:pPr><w:keepNext/><w:jc w:val=\"center\"/><w:spacing w:before=\"280\" w:after=\"80\"/><w:outlineLvl w:val=\"1\"/></w:pPr>")
+                .append("<w:pPr><w:keepNext/><w:spacing w:before=\"280\" w:after=\"80\"/><w:jc w:val=\"center\"/><w:outlineLvl w:val=\"1\"/></w:pPr>")
                 .append("<w:rPr><w:b/><w:color w:val=\"737373\"/><w:sz w:val=\"19\"/><w:szCs w:val=\"19\"/></w:rPr></w:style>");
 
         pStyle(s, "C2DSender", "C2D Expéditeur", "<w:keepNext/><w:spacing w:before=\"160\" w:after=\"40\"/>",
                 "<w:b/><w:sz w:val=\"20\"/>");
-        pStyle(s, "C2DText", "C2D Message", "<w:ind w:left=\"284\"/><w:spacing w:after=\"60\"/>", "");
-        pStyle(s, "C2DSystem", "C2D Message système", "<w:jc w:val=\"center\"/><w:spacing w:before=\"80\" w:after=\"80\"/>",
+        pStyle(s, "C2DText", "C2D Message", "<w:spacing w:after=\"60\"/><w:ind w:left=\"284\"/>", "");
+        pStyle(s, "C2DSystem", "C2D Message système", "<w:spacing w:before=\"80\" w:after=\"80\"/><w:jc w:val=\"center\"/>",
                 "<w:i/><w:color w:val=\"" + GREY + "\"/><w:sz w:val=\"17\"/>");
         pStyle(s, "Footer", "footer", "<w:jc w:val=\"center\"/>", "<w:color w:val=\"" + GREY + "\"/><w:sz w:val=\"16\"/>");
 
@@ -569,7 +624,9 @@ public final class DocxWriter {
     }
 
     private static void pStyle(StringBuilder s, String id, String name, String pPr, String rPr) {
-        s.append("<w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"").append(id).append("\">")
+        boolean builtIn = id.equals("Title") || id.equals("Footer");
+        s.append("<w:style w:type=\"paragraph\"").append(builtIn ? "" : " w:customStyle=\"1\"")
+                .append(" w:styleId=\"").append(id).append("\">")
                 .append("<w:name w:val=\"").append(xml(name)).append("\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/>");
         if (!pPr.isEmpty()) s.append("<w:pPr>").append(pPr).append("</w:pPr>");
         if (!rPr.isEmpty()) s.append("<w:rPr>").append(rPr).append("</w:rPr>");

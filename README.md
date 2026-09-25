@@ -8,8 +8,8 @@
 accompagné de tous ses médias rangés dans des sous-dossiers : de quoi conserver, imprimer ou
 transmettre l'histoire d'un groupe familial, d'une association ou d'un chantier.
 
-Application Android, libre et gratuite, sans publicité, **sans connexion Internet** : tout le
-traitement se fait sur le téléphone.
+Application Android, libre et gratuite, sans publicité : tout le traitement se fait sur le
+téléphone, et rien de vos discussions n'est envoyé sur Internet.
 
 <p align="center">
   <img src="docs/apercu-document.png" alt="Aperçu d'un document produit par Chat2Doc" width="900">
@@ -40,8 +40,9 @@ Le document Word comporte :
 - une **couleur par participant** et l'heure de chaque message, comme dans WhatsApp ;
 - les **photos insérées dans le fil**, à leur place ; un clic sur une photo ouvre l'original ;
 - des **liens** vers les vidéos, messages vocaux et documents, qui s'ouvrent depuis le document ;
-- les adresses web rendues cliquables, les messages supprimés ou modifiés signalés, et les médias
-  manquants indiqués.
+- les adresses web rendues cliquables et, si vous le souhaitez, **l'aperçu des liens** comme dans
+  WhatsApp : vignette, titre et nom du site (ou titre et chaîne pour une vidéo YouTube) ;
+- les messages supprimés ou modifiés signalés, et les médias manquants indiqués.
 
 > Gardez le document Word **dans son dossier**, à côté des sous-dossiers : les liens sont relatifs.
 > On peut déplacer ou copier le dossier entier (clé USB, disque, Drive…) sans rien casser.
@@ -55,6 +56,14 @@ Le document Word comporte :
    **Partager**, ou **Ouvrir le document Word** directement sur le téléphone.
 
 On peut aussi lancer Chat2Doc et choisir un export `.zip` déjà enregistré.
+
+### Aperçus des liens
+
+WhatsApp n'inclut pas les aperçus des liens dans l'export : le fichier texte ne contient que les
+adresses. Si la discussion contient des liens, Chat2Doc indique leur nombre et une **estimation de
+la durée** nécessaire, puis propose d'aller chercher les aperçus sur Internet (titre, image, nom du
+site). On peut refuser, ou en cours de route toucher **« Ignorer les aperçus restants »** : la
+conversion se poursuit avec les aperçus déjà obtenus. Les liens restent cliquables dans tous les cas.
 
 Le réglage *Photos dans le document Word* fixe la taille des photos insérées dans le document
 (800 px, 1280 px ou taille d'origine) ; les originaux sont de toute façon conservés dans le
@@ -132,9 +141,11 @@ et ne demande aucune permission.
 
 ## Confidentialité
 
-Chat2Doc ne demande **aucune permission** : ni Internet, ni accès aux contacts, ni accès au
-stockage. Les fichiers lui sont confiés par le menu de partage et repartent par le sélecteur de
-fichiers d'Android. Rien ne quitte le téléphone sans votre action.
+Chat2Doc n'accède ni aux contacts ni au stockage : les fichiers lui sont confiés par le menu de
+partage et repartent par le sélecteur de fichiers d'Android. Sa seule permission est l'accès à
+Internet, utilisé **uniquement** pour les aperçus des liens, et seulement si vous l'acceptez : il
+consulte alors les pages concernées, comme le ferait un navigateur, sans rien envoyer de vos
+discussions. Rien ne quitte le téléphone sans votre action.
 
 Chat2Doc n'est ni affilié à WhatsApp ni approuvé par WhatsApp ou Meta. WhatsApp est une marque de
 WhatsApp LLC.

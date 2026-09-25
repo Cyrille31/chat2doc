@@ -45,6 +45,21 @@ public final class Converter {
         public DocxWriter.Stats stats;
         public int embeddedPictures;
         public int mediaFiles;
+        /** Liens distincts dans la discussion, et aperçus obtenus. */
+        public int links, previews;
+    }
+
+    /** Discussion analysée et médias rangés, en attente de la mise en page (voir {@link #prepare}). */
+    public static final class Prepared {
+        public String title;
+        public List<String> links;
+        /** Parmi les liens, nombre de vidéos YouTube. */
+        public int youtubeLinks;
+        String safe;
+        File folder, outputDir, workDir;
+        List<Message> messages;
+        Map<String, MediaFile> media;
+        Options opt;
     }
 
     private static final Pattern TITLE_PREFIX = Pattern.compile(
@@ -61,6 +76,15 @@ public final class Converter {
      */
     public static Result convert(File inputDir, File outputDir, File workDir, Options opt,
                                  ImageProcessor images, ProgressListener progress) throws IOException {
+        return finish(prepare(inputDir, outputDir, workDir, opt, progress), null, images, progress);
+    }
+
+    /**
+     * Première étape : lecture de la discussion, rangement des médias, repérage des liens.
+     * Rapide ; permet de proposer ensuite la récupération des aperçus des liens.
+     */
+    public static Prepared prepare(File inputDir, File outputDir, File workDir, Options opt,
+                                   ProgressListener progress) throws IOException {
         progress.onProgress("Lecture de la discussion", 0, 0);
 
         List<File> all = new ArrayList<>();
@@ -113,6 +137,33 @@ public final class Converter {
         source.mkdirs();
         copyFile(chat, new File(source, chat.getName()));
 
+        Prepared p = new Prepared();
+        p.title = title;
+        p.safe = safe;
+        p.folder = folder;
+        p.outputDir = outputDir;
+        p.workDir = workDir;
+        p.messages = messages;
+        p.media = media;
+        p.opt = opt;
+        p.links = Links.collect(messages);
+        for (String l : p.links) if (Links.youtubeId(l) != null) p.youtubeLinks++;
+        return p;
+    }
+
+    /**
+     * Seconde étape : document Word et archive.
+     *
+     * @param previews aperçus des liens (peut être {@code null})
+     */
+    public static Result finish(Prepared p, Map<String, LinkPreviewFetcher.Preview> previews,
+                                ImageProcessor images, ProgressListener progress) throws IOException {
+        String safe = p.safe, title = p.title;
+        File folder = p.folder, workDir = p.workDir, outputDir = p.outputDir;
+        List<Message> messages = p.messages;
+        Map<String, MediaFile> media = p.media;
+        Options opt = p.opt;
+
         // Document Word
         File docx = new File(folder, safe + ".docx");
         File tmp = new File(workDir, "docx-tmp");
@@ -120,7 +171,7 @@ public final class Converter {
         //noinspection ResultOfMethodCallIgnored
         tmp.mkdirs();
         DocxWriter writer = new DocxWriter(tmp, images, opt.imageMaxPx);
-        writer.write(docx, title, messages, media, progress);
+        writer.write(docx, title, messages, media, previews, progress);
         Zips.deleteRecursively(tmp);
 
         Result r = new Result();
@@ -130,6 +181,8 @@ public final class Converter {
         r.stats = DocxWriter.computeStats(messages, media);
         r.embeddedPictures = writer.getEmbeddedPictures();
         r.mediaFiles = media.size();
+        r.links = p.links.size();
+        r.previews = previews == null ? 0 : previews.size();
 
         if (opt.makeZip) {
             File zip = new File(outputDir, safe + " - Chat2Doc " + LocalDate.now() + ".zip");
