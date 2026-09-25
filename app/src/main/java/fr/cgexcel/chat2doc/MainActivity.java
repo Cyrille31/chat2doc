@@ -1,0 +1,542 @@
+/*
+ * Chat2Doc — CGExcel
+ * Convertit une discussion WhatsApp exportée en document Word, avec les médias rangés à côté.
+ * (c) 2026 Cyrille Gindre — Licence MIT + BAL 1.0 (Bonne Action License)
+ */
+package fr.cgexcel.chat2doc;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.OpenableColumns;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.ProgressBar;
+import android.widget.RadioGroup;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.core.content.FileProvider;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import fr.cgexcel.chat2doc.core.ChatParser;
+import fr.cgexcel.chat2doc.core.Converter;
+import fr.cgexcel.chat2doc.core.ProgressListener;
+import fr.cgexcel.chat2doc.core.Zips;
+
+public class MainActivity extends Activity {
+
+    private static final int REQ_PICK_ZIP = 1;
+    private static final int REQ_SAVE = 2;
+    private static final String PREFS = "chat2doc";
+    private static final String PREF_QUALITY = "qualite_photos";
+    private static final int[] QUALITY_PX = {800, 1280, 0};
+    private static final String GITHUB = "https://github.com/Cyrille31/chat2doc";
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.FRENCH);
+
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+
+    private View home, working, done;
+    private TextView stage, progressDetail, summary, error;
+    private ProgressBar progress;
+    private RadioGroup quality;
+
+    private volatile boolean cancelled;
+    private boolean busy;
+    private Converter.Result result;
+
+    // ================================================================================================
+    // Cycle de vie
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        home = findViewById(R.id.home);
+        working = findViewById(R.id.working);
+        done = findViewById(R.id.done);
+        stage = findViewById(R.id.stage);
+        progressDetail = findViewById(R.id.progress_detail);
+        summary = findViewById(R.id.summary);
+        error = findViewById(R.id.error);
+        progress = findViewById(R.id.progress);
+        quality = findViewById(R.id.quality);
+
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        int q = prefs.getInt(PREF_QUALITY, 1);
+        quality.check(q == 0 ? R.id.quality_small : q == 2 ? R.id.quality_original : R.id.quality_standard);
+        quality.setOnCheckedChangeListener((group, id) -> prefs.edit().putInt(PREF_QUALITY,
+                id == R.id.quality_small ? 0 : id == R.id.quality_original ? 2 : 1).apply());
+
+        findViewById(R.id.pick_zip).setOnClickListener(v -> pickZip());
+        findViewById(R.id.cancel).setOnClickListener(v -> {
+            cancelled = true;
+            stage.setText("Annulation…");
+        });
+        findViewById(R.id.save).setOnClickListener(v -> save());
+        findViewById(R.id.share).setOnClickListener(v -> share());
+        findViewById(R.id.open_word).setOnClickListener(v -> openWord());
+        findViewById(R.id.again).setOnClickListener(v -> showHome());
+        findViewById(R.id.footer).setOnClickListener(v -> showLicence());
+
+        if (savedInstanceState == null) handleIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (busy) {
+            Toast.makeText(this, "Une conversion est déjà en cours.", Toast.LENGTH_LONG).show();
+        } else {
+            handleIntent(intent);
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (busy) {
+            Toast.makeText(this, "Conversion en cours : touchez « Annuler » pour l’interrompre.", Toast.LENGTH_SHORT).show();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        cancelled = true;
+        worker.shutdown();
+        super.onDestroy();
+    }
+
+    // ================================================================================================
+    // Réception du partage
+
+    private void handleIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)
+                && !Intent.ACTION_VIEW.equals(action)) {
+            showHome();
+            return;
+        }
+        List<Uri> uris = collectUris(intent);
+        String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+        String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+
+        if (uris.isEmpty() && (text == null || !ChatParser.looksLikeChat(text))) {
+            showHome();
+            showError("Ce partage ne contient pas d’export WhatsApp.\n\nDans WhatsApp : ouvrez la discussion, "
+                    + "menu ⋮ → Plus → Exporter la discussion, puis choisissez Chat2Doc.");
+            return;
+        }
+        convert(uris, uris.isEmpty() ? text : null, subject);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static List<Uri> collectUris(Intent intent) {
+        Set<Uri> set = new LinkedHashSet<>();
+        if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            Uri u = Build.VERSION.SDK_INT >= 33
+                    ? intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class)
+                    : intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u != null) set.add(u);
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) {
+            ArrayList<Uri> list = Build.VERSION.SDK_INT >= 33
+                    ? intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri.class)
+                    : intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (list != null) for (Uri u : list) if (u != null) set.add(u);
+        } else if (intent.getData() != null) {
+            set.add(intent.getData());
+        }
+        ClipData clip = intent.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri u = clip.getItemAt(i).getUri();
+                if (u != null) set.add(u);
+            }
+        }
+        return new ArrayList<>(set);
+    }
+
+    private void pickZip() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/zip");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed",
+                "application/octet-stream"});
+        try {
+            startActivityForResult(i, REQ_PICK_ZIP);
+        } catch (ActivityNotFoundException e) {
+            showError("Aucun sélecteur de fichiers n’est disponible sur ce téléphone.");
+        }
+    }
+
+    // ================================================================================================
+    // Conversion
+
+    private void convert(List<Uri> uris, String sharedText, String subject) {
+        busy = true;
+        cancelled = false;
+        result = null;
+        showWorking();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        final int px = QUALITY_PX[qualityIndex()];
+        final ProgressListener listener = new UiProgress();
+
+        worker.execute(() -> {
+            try {
+                File jobs = new File(getCacheDir(), "jobs");
+                Zips.deleteRecursively(jobs); // on ne garde que la dernière conversion
+                File job = new File(jobs, String.valueOf(System.currentTimeMillis()));
+                File in = new File(job, "entree"), out = new File(job, "archive"), tmp = new File(job, "tmp");
+                if (!in.mkdirs() || !out.mkdirs() || !tmp.mkdirs()) throw new IOException("Espace de travail indisponible.");
+
+                String hint = subject;
+                if (sharedText != null) {
+                    try (OutputStream os = new FileOutputStream(new File(in, "Discussion WhatsApp.txt"))) {
+                        os.write(sharedText.getBytes(StandardCharsets.UTF_8));
+                    }
+                } else {
+                    String zipName = receive(uris, in, listener);
+                    if (hint == null) hint = zipName;
+                }
+
+                Converter.Options opt = new Converter.Options();
+                opt.imageMaxPx = px;
+                opt.titleHint = hint;
+                opt.dayFirstByDefault = !Locale.getDefault().getCountry().equals("US");
+                Converter.Result r = Converter.convert(in, out, tmp, opt, new AndroidImageProcessor(), listener);
+                Zips.deleteRecursively(in);
+                Zips.deleteRecursively(tmp);
+                ui.post(() -> finished(r, null));
+            } catch (ProgressListener.CancelledException e) {
+                ui.post(() -> finished(null, "Conversion annulée."));
+            } catch (Throwable t) {
+                ui.post(() -> finished(null, describe(t)));
+            }
+        });
+    }
+
+    /** Copie les fichiers partagés dans {@code dir} (en décompressant les .zip). Renvoie le nom du .zip reçu, le cas échéant. */
+    private String receive(List<Uri> uris, File dir, ProgressListener listener) throws IOException {
+        String zipName = null;
+        int n = 0;
+        for (Uri uri : uris) {
+            if (listener.isCancelled()) throw new ProgressListener.CancelledException();
+            listener.onProgress("Réception des fichiers", n++, uris.size());
+            String name = displayName(uri);
+            String type = getContentResolver().getType(uri);
+            boolean zip = name.toLowerCase(Locale.ROOT).endsWith(".zip")
+                    || "application/zip".equals(type) || "application/x-zip-compressed".equals(type);
+            try (InputStream is = getContentResolver().openInputStream(uri)) {
+                if (is == null) continue;
+                if (zip) {
+                    Zips.unzip(new BufferedInputStream(is, 1 << 16), dir, listener);
+                    zipName = name;
+                } else {
+                    File dest = unique(dir, name);
+                    try (OutputStream os = new FileOutputStream(dest)) {
+                        byte[] buf = new byte[1 << 16];
+                        int r;
+                        while ((r = is.read(buf)) > 0) os.write(buf, 0, r);
+                    }
+                }
+            } catch (SecurityException e) {
+                throw new IOException("L’accès à un fichier partagé a été refusé. Relancez l’export depuis WhatsApp.");
+            }
+        }
+        listener.onProgress("Réception des fichiers", uris.size(), uris.size());
+        return zipName;
+    }
+
+    private String displayName(Uri uri) {
+        String name = null;
+        try (Cursor c = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) name = c.getString(0);
+        } catch (RuntimeException ignored) {
+            // certains fournisseurs ne répondent pas à la requête : on se rabat sur l'adresse
+        }
+        if (name == null) name = uri.getLastPathSegment();
+        if (name == null) name = "fichier";
+        name = name.substring(name.lastIndexOf('/') + 1).replaceAll("[\\\\:*?\"<>|]", "_");
+        return name.isEmpty() ? "fichier" : name;
+    }
+
+    private static File unique(File dir, String name) {
+        File f = new File(dir, name);
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name, ext = dot > 0 ? name.substring(dot) : "";
+        for (int i = 2; f.exists(); i++) f = new File(dir, base + " (" + i + ")" + ext);
+        return f;
+    }
+
+    private void finished(Converter.Result r, String message) {
+        busy = false;
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (isFinishing() || isDestroyed()) return;
+        if (r == null) {
+            showHome();
+            showError(message);
+            return;
+        }
+        result = r;
+        summary.setText(describe(r));
+        home.setVisibility(View.GONE);
+        working.setVisibility(View.GONE);
+        done.setVisibility(View.VISIBLE);
+        error.setVisibility(View.GONE);
+    }
+
+    private static String describe(Converter.Result r) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("« ").append(r.title).append(" »\n");
+        sb.append(count(r.stats.messages, "message", "messages")).append(" de ")
+                .append(count(r.stats.perSender.size(), "participant", "participants"));
+        if (r.stats.first != null) {
+            if (r.stats.first.toLocalDate().equals(r.stats.last.toLocalDate())) {
+                sb.append(", le ").append(DATE.format(r.stats.first));
+            } else {
+                sb.append(", du ").append(DATE.format(r.stats.first)).append(" au ").append(DATE.format(r.stats.last));
+            }
+        }
+        sb.append(".\n\n");
+        sb.append(count(r.embeddedPictures, "photo insérée", "photos insérées")).append(" dans le document Word, ")
+                .append(count(r.mediaFiles, "média rangé", "médias rangés")).append(" dans l’archive.");
+        if (!r.stats.missing.isEmpty()) {
+            sb.append("\n").append(count(r.stats.missing.size(), "fichier cité est absent", "fichiers cités sont absents"))
+                    .append(" de l’export.");
+        }
+        if (r.stats.omitted > 0) {
+            sb.append("\n").append(count(r.stats.omitted, "média n’a pas été fourni", "médias n’ont pas été fournis"))
+                    .append(" par WhatsApp (export sans les médias ?).");
+        }
+        if (r.zip != null) {
+            sb.append("\n\nArchive : ").append(r.zip.getName()).append(" (").append(size(r.zip.length())).append(")");
+        }
+        return sb.toString();
+    }
+
+    private static String describe(Throwable t) {
+        String m = String.valueOf(t.getMessage());
+        if (t instanceof OutOfMemoryError) {
+            return "Mémoire insuffisante. Choisissez « Photos compactes » et recommencez.";
+        }
+        if (m.contains("ENOSPC") || m.toLowerCase(Locale.ROOT).contains("no space")) {
+            return "Espace de stockage insuffisant sur le téléphone. Libérez de la place (il faut environ "
+                    + "deux fois la taille de l’export) puis recommencez.";
+        }
+        return "La conversion a échoué.\n\n" + (t.getMessage() != null ? t.getMessage() : t.toString());
+    }
+
+    // ================================================================================================
+    // Enregistrement, partage, ouverture
+
+    private void save() {
+        if (result == null || result.zip == null) return;
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/zip");
+        i.putExtra(Intent.EXTRA_TITLE, result.zip.getName());
+        try {
+            startActivityForResult(i, REQ_SAVE);
+        } catch (ActivityNotFoundException e) {
+            share();
+        }
+    }
+
+    private void saveTo(Uri target) {
+        final File zip = result.zip;
+        busy = true;
+        cancelled = false;
+        showWorking();
+        final ProgressListener listener = new UiProgress();
+        worker.execute(() -> {
+            try (InputStream is = new FileInputStream(zip);
+                 OutputStream os = getContentResolver().openOutputStream(target, "w")) {
+                if (os == null) throw new IOException("Emplacement inaccessible.");
+                byte[] buf = new byte[1 << 16];
+                long total = zip.length(), copied = 0;
+                int r;
+                while ((r = is.read(buf)) > 0) {
+                    if (listener.isCancelled()) throw new ProgressListener.CancelledException();
+                    os.write(buf, 0, r);
+                    copied += r;
+                    listener.onProgress("Enregistrement de l’archive", (int) (copied >> 10), (int) (total >> 10));
+                }
+                ui.post(() -> {
+                    finished(result, null);
+                    Toast.makeText(this, "Archive enregistrée.", Toast.LENGTH_LONG).show();
+                });
+            } catch (Throwable t) {
+                final String msg = t instanceof ProgressListener.CancelledException
+                        ? "Enregistrement annulé." : "Enregistrement impossible : " + t.getMessage();
+                ui.post(() -> {
+                    finished(result, null);
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void share() {
+        if (result == null || result.zip == null) return;
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.zip);
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType("application/zip");
+        i.putExtra(Intent.EXTRA_STREAM, uri);
+        i.putExtra(Intent.EXTRA_SUBJECT, result.title + " — discussion WhatsApp");
+        i.setClipData(ClipData.newRawUri(result.zip.getName(), uri));
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(i, getString(R.string.share)));
+    }
+
+    private void openWord() {
+        if (result == null) return;
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.docx);
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(uri, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(i);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Aucune application ne sait ouvrir les documents Word sur ce téléphone "
+                    + "(Word, Google Docs, WPS Office…).", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == REQ_PICK_ZIP) {
+            convert(Collections.singletonList(data.getData()), null, null);
+        } else if (requestCode == REQ_SAVE && result != null) {
+            saveTo(data.getData());
+        }
+    }
+
+    // ================================================================================================
+    // Affichage
+
+    private void showHome() {
+        result = null;
+        home.setVisibility(View.VISIBLE);
+        working.setVisibility(View.GONE);
+        done.setVisibility(View.GONE);
+        error.setVisibility(View.GONE);
+    }
+
+    private void showWorking() {
+        home.setVisibility(View.GONE);
+        done.setVisibility(View.GONE);
+        error.setVisibility(View.GONE);
+        working.setVisibility(View.VISIBLE);
+        stage.setText("Préparation…");
+        progressDetail.setText("");
+        progress.setIndeterminate(true);
+    }
+
+    private void showError(String message) {
+        error.setText(message);
+        error.setVisibility(View.VISIBLE);
+    }
+
+    private void showLicence() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.bal_title)
+                .setMessage(R.string.bal_text)
+                .setPositiveButton(R.string.ok, null)
+                .setNeutralButton("Code source", (d, w) -> {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB)));
+                    } catch (ActivityNotFoundException ignored) {
+                        // pas de navigateur
+                    }
+                })
+                .show();
+    }
+
+    private int qualityIndex() {
+        int id = quality.getCheckedRadioButtonId();
+        return id == R.id.quality_small ? 0 : id == R.id.quality_original ? 2 : 1;
+    }
+
+    /** Relais de l'avancement vers l'écran, limité à une mise à jour par image affichée. */
+    private final class UiProgress implements ProgressListener {
+        private final AtomicBoolean pending = new AtomicBoolean();
+        private volatile String lastStage = "";
+        private volatile int lastDone, lastTotal;
+
+        @Override
+        public void onProgress(String s, int d, int t) {
+            lastStage = s;
+            lastDone = d;
+            lastTotal = t;
+            if (pending.compareAndSet(false, true)) {
+                ui.postDelayed(() -> {
+                    pending.set(false);
+                    if (!busy || cancelled) return;
+                    stage.setText(lastStage + "…");
+                    if (lastTotal > 0) {
+                        progress.setIndeterminate(false);
+                        progress.setMax(lastTotal);
+                        progress.setProgress(Math.min(lastDone, lastTotal));
+                        progressDetail.setText(String.format(Locale.FRENCH, "%,d / %,d", lastDone, lastTotal));
+                    } else {
+                        progress.setIndeterminate(true);
+                        progressDetail.setText(lastDone > 0 ? String.format(Locale.FRENCH, "%,d", lastDone) : "");
+                    }
+                }, 120);
+            }
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
+    // ================================================================================================
+
+    private static String count(int n, String one, String many) {
+        return String.format(Locale.FRENCH, "%,d", n) + " " + (n > 1 ? many : one);
+    }
+
+    private static String size(long bytes) {
+        if (bytes < 1024 * 1024) return Math.max(1, bytes / 1024) + " Ko";
+        if (bytes < 1024L * 1024 * 1024) return String.format(Locale.FRENCH, "%.1f Mo", bytes / 1048576.0);
+        return String.format(Locale.FRENCH, "%.2f Go", bytes / 1073741824.0);
+    }
+}
