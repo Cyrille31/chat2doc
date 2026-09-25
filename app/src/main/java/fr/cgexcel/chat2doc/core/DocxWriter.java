@@ -43,9 +43,8 @@ import java.util.zip.ZipOutputStream;
 public final class DocxWriter {
 
     private static final Locale FR = Locale.FRENCH;
-    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", FR);
+    private static final DateTimeFormatter WEEKDAY = DateTimeFormatter.ofPattern("EEEE", FR);
     private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MMMM yyyy", FR);
-    private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("d MMMM yyyy", FR);
     private static final DateTimeFormatter HOUR = DateTimeFormatter.ofPattern("HH:mm", FR);
 
     private static final String[] PALETTE = {
@@ -70,7 +69,9 @@ public final class DocxWriter {
 
     // État de l'écriture
     private final StringBuilder rels = new StringBuilder();
-    private final List<String[]> mediaEntries = new ArrayList<>(); // {nom dans le zip, chemin du fichier temporaire}
+    private final List<String[]> mediaEntries = new ArrayList<>(); // {nom dans le zip, fichier, "1" si temporaire}
+    private final Archive archive;
+    private final ThumbCache cache;
     private final Map<String, String> linkRelIds = new HashMap<>();
     private final Map<String, Picture> pictures = new HashMap<>();
     private final Map<String, String> senderColors = new HashMap<>();
@@ -106,7 +107,9 @@ public final class DocxWriter {
      * @param images     préparation des images
      * @param imageMaxPx plus grand côté des photos insérées (0 = taille d'origine)
      */
-    public DocxWriter(File tmpDir, ImageProcessor images, int imageMaxPx) {
+    DocxWriter(File tmpDir, ImageProcessor images, int imageMaxPx, Archive archive, ThumbCache cache) {
+        this.archive = archive;
+        this.cache = cache;
         this.tmpDir = tmpDir;
         this.images = images;
         this.imageMaxPx = imageMaxPx;
@@ -178,8 +181,8 @@ public final class DocxWriter {
         para(w, "Title", "", run(title, ""));
         if (s.first != null) {
             String period = s.first.toLocalDate().equals(s.last.toLocalDate())
-                    ? "le " + SHORT.format(s.first)
-                    : "du " + SHORT.format(s.first) + " au " + SHORT.format(s.last);
+                    ? "le " + dateFr(s.first.toLocalDate(), false)
+                    : "du " + dateFr(s.first.toLocalDate(), false) + " au " + dateFr(s.last.toLocalDate(), false);
             para(w, "C2DSubtitle", "", run("Discussion WhatsApp " + period, ""));
         }
 
@@ -228,7 +231,7 @@ public final class DocxWriter {
         }
 
         para(w, "C2DNote", "<w:spacing w:before=\"480\"/>",
-                run("Document créé le " + SHORT.format(LocalDate.now()) + " avec Chat2Doc — CGExcel. "
+                run("Document créé le " + dateFr(LocalDate.now(), false) + " avec Chat2Doc — CGExcel. "
                         + "Les photos, vidéos, messages vocaux et documents se trouvent dans les sous-dossiers "
                         + "placés à côté de ce fichier : gardez-les ensemble pour que les liens fonctionnent.", ""));
     }
@@ -266,7 +269,7 @@ public final class DocxWriter {
                 first = false;
             }
             if (!day.equals(lastDay)) {
-                para(w, "Heading2", "", run(capitalize(DAY.format(day)), ""));
+                para(w, "Heading2", "", run(capitalize(dateFr(day, true)), ""));
                 lastDay = day;
                 lastSender = null;
             }
@@ -387,7 +390,7 @@ public final class DocxWriter {
             seen.add(f.url);
             boolean hasImage = false;
             if (p.image != null) {
-                String img = pictureOf(p.image, "lien:" + p.url, p.site != null ? p.site : "Aperçu du lien",
+                String img = pictureOf(Archive.STATE + "/apercus/" + p.image.getName(), p.site != null ? p.site : "Aperçu du lien",
                         PREVIEW_MAX_W, PREVIEW_MAX_H, p.url, PREVIEW_PX);
                 if (img != null) {
                     bodies.add(img);
@@ -420,7 +423,7 @@ public final class DocxWriter {
             case VOICE: case AUDIO: symbol = "♪ "; break;
             default: symbol = "■ "; break;
         }
-        String label = mf.kind.label + " : " + mf.name + " (" + size(mf.file.length()) + ")";
+        String label = mf.kind.label + " : " + mf.name + " (" + size(mf.size) + ")";
         return run(symbol, "<w:color w:val=\"" + GREY + "\"/>")
                 + "<w:hyperlink r:id=\"" + linkRel(relativeUrl(mf.relativePath)) + "\" w:history=\"1\""
                 + " w:tooltip=\"" + xml("Ouvrir " + mf.relativePath) + "\">"
@@ -430,40 +433,72 @@ public final class DocxWriter {
     /** Photo insérée dans le fil ; un clic ouvre l'original. Renvoie null si l'image n'est pas lisible. */
     private String picture(MediaFile mf) throws IOException {
         boolean sticker = mf.kind == MediaKind.STICKER;
-        return pictureOf(mf.file, mf.relativePath, mf.name,
+        return pictureOf(mf.relativePath, mf.name,
                 sticker ? STICKER_MAX : PHOTO_MAX_W, sticker ? STICKER_MAX : PHOTO_MAX_H,
                 relativeUrl(mf.relativePath), imageMaxPx);
     }
 
-    /** Image insérée dans le fil, cliquable vers {@code linkTarget}. Renvoie null si l'image n'est pas lisible. */
-    private String pictureOf(File file, String key, String label, double maxW, double maxH,
+    /**
+     * Image de l'archive insérée dans le fil, cliquable vers {@code linkTarget}. Les images réduites sont
+     * conservées dans l'archive pour les mises à jour suivantes. Renvoie null si l'image n'est pas lisible.
+     */
+    private String pictureOf(String sourceRel, String label, double maxW, double maxH,
                              String linkTarget, int maxPx) throws IOException {
+        String key = sourceRel + "|" + maxPx;
         Picture pic = pictures.get(key);
         if (pic == null) {
-            ImageProcessor.Result r;
-            try {
-                r = images.process(file, maxPx);
-            } catch (IOException | RuntimeException | OutOfMemoryError e) {
-                r = null;
+            File embed;
+            String ext;
+            int width, height;
+            boolean temporary = false;
+            ThumbCache.Entry cached = maxPx > 0 ? cache.get(key) : null;
+            File cachedFile = cached != null ? cache.file(cached) : null;
+            if (cachedFile != null) {
+                embed = cachedFile;
+                ext = cached.extension;
+                width = cached.width;
+                height = cached.height;
+            } else {
+                File src = archive.fetch(sourceRel);
+                if (src == null) return null;
+                ImageProcessor.Result r;
+                try {
+                    r = images.process(src, maxPx);
+                } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                    r = null;
+                } finally {
+                    //noinspection ResultOfMethodCallIgnored
+                    if (archive.isTransient(src, sourceRel)) src.delete();
+                }
+                if (r == null || r.width <= 0 || r.height <= 0) return null;
+                ext = r.extension;
+                width = r.width;
+                height = r.height;
+                if (maxPx > 0) {
+                    embed = cache.file(cache.put(key, r));
+                    if (embed == null) return null;
+                } else {
+                    // Taille d'origine : pas de copie en cache (ce serait un doublon des originaux)
+                    embed = new File(tmpDir, "img" + (mediaEntries.size() + 1) + "." + ext);
+                    try (OutputStream os = new FileOutputStream(embed)) {
+                        os.write(r.data);
+                    }
+                    temporary = true;
+                }
             }
-            if (r == null || r.width <= 0 || r.height <= 0) return null;
 
-            String entry = "media/image" + (mediaEntries.size() + 1) + "." + r.extension;
-            File tmp = new File(tmpDir, "img" + (mediaEntries.size() + 1) + "." + r.extension);
-            try (OutputStream os = new FileOutputStream(tmp)) {
-                os.write(r.data);
-            }
-            mediaEntries.add(new String[]{"word/" + entry, tmp.getPath()});
+            String entry = "media/image" + (mediaEntries.size() + 1) + "." + ext;
+            mediaEntries.add(new String[]{"word/" + entry, embed.getPath(), temporary ? "1" : ""});
             String relId = "rId" + (nextRelId++);
             rels.append("<Relationship Id=\"").append(relId)
                     .append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"")
                     .append(entry).append("\"/>");
 
-            double naturalW = r.width / 96.0 * 2.54, naturalH = r.height / 96.0 * 2.54;
+            double naturalW = width / 96.0 * 2.54, naturalH = height / 96.0 * 2.54;
             double k = Math.min(1.0, Math.min(maxW / naturalW, maxH / naturalH));
             pic = new Picture(relId, Math.round(naturalW * k * EMU_PER_CM), Math.round(naturalH * k * EMU_PER_CM));
             pictures.put(key, pic);
-            if (!key.startsWith("lien:")) embeddedPictures++;
+            if (!sourceRel.startsWith(Archive.STATE)) embeddedPictures++;
         }
 
         int id = nextPictureId++;
@@ -568,7 +603,7 @@ public final class DocxWriter {
                 copy(f, zip);
                 zip.closeEntry();
                 //noinspection ResultOfMethodCallIgnored
-                f.delete();
+                if ("1".equals(e[2])) f.delete();
             }
         } finally {
             //noinspection ResultOfMethodCallIgnored
@@ -694,6 +729,13 @@ public final class DocxWriter {
         if (bytes < 1024) return bytes + " o";
         if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024.0)) + " Ko";
         return String.format(FR, "%.1f Mo", bytes / (1024.0 * 1024.0));
+    }
+
+    /** « 1er septembre 2026 », « mardi 24 septembre 2026 ». */
+    public static String dateFr(LocalDate d, boolean weekday) {
+        String s = (d.getDayOfMonth() == 1 ? "1er" : String.valueOf(d.getDayOfMonth())) + " "
+                + MONTH.format(d);
+        return weekday ? WEEKDAY.format(d) + " " + s : s;
     }
 
     private static String capitalize(String s) {

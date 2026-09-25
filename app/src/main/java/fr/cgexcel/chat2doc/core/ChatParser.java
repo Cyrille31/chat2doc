@@ -289,9 +289,12 @@ public final class ChatParser {
 
         text = trimLines(String.join("\n", kept));
 
-        if (OMITTED.matcher(text).matches()) {
+        int nl = text.indexOf('\n');
+        String firstLine = nl < 0 ? text : text.substring(0, nl).trim();
+        if (OMITTED.matcher(firstLine).matches()) {
+            // « <Médias omis> », éventuellement suivi de la légende
             msg.mediaOmitted = true;
-            text = "";
+            text = nl < 0 ? "" : trimLines(text.substring(nl + 1));
         } else if (DELETED.matcher(text).matches()) {
             msg.deleted = true;
         }

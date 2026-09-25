@@ -85,6 +85,51 @@
                 style="@style/Chat2Doc.Section"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:text="@string/folder_title" />
+
+            <TextView
+                android:id="@+id/folder_status"
+                style="@style/Chat2Doc.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/folder_choose"
+                style="@style/Chat2Doc.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/folder_choose" />
+
+            <Button
+                android:id="@+id/folder_forget"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/folder_forget"
+                android:textAllCaps="false"
+                android:textColor="@color/text_soft"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/saved_title"
+                style="@style/Chat2Doc.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/saved_title"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/saved_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                style="@style/Chat2Doc.Section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:text="@string/quality_title" />
 
             <RadioGroup

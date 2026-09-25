@@ -86,6 +86,7 @@ public final class Zips {
         if (list == null) return;
         java.util.Arrays.sort(list);
         for (File f : list) {
+            if (f.getName().startsWith(".")) continue; // état interne (.chat2doc) : pas dans l'archive .zip
             if (f.isDirectory()) collect(f, out);
             else out.add(f);
         }

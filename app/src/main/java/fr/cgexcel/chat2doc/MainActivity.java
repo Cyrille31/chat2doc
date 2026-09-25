@@ -21,6 +21,7 @@ import android.provider.OpenableColumns;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -45,11 +46,14 @@ import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import fr.cgexcel.chat2doc.core.Archive;
 import fr.cgexcel.chat2doc.core.ChatParser;
 import fr.cgexcel.chat2doc.core.Converter;
+import fr.cgexcel.chat2doc.core.DocxWriter;
 import fr.cgexcel.chat2doc.core.LinkPreviewFetcher;
 import fr.cgexcel.chat2doc.core.ProgressListener;
 import fr.cgexcel.chat2doc.core.Zips;
@@ -58,11 +62,12 @@ public class MainActivity extends Activity {
 
     private static final int REQ_PICK_ZIP = 1;
     private static final int REQ_SAVE = 2;
+    private static final int REQ_FOLDER = 3;
     private static final String PREFS = "chat2doc";
     private static final String PREF_QUALITY = "qualite_photos";
     private static final int[] QUALITY_PX = {800, 1280, 0};
     private static final String GITHUB = "https://github.com/Cyrille31/chat2doc";
-    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.FRENCH);
+    private static final DateTimeFormatter HOUR = DateTimeFormatter.ofPattern("HH:mm", Locale.FRENCH);
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -71,12 +76,16 @@ public class MainActivity extends Activity {
     private TextView stage, progressDetail, summary, error;
     private ProgressBar progress;
     private RadioGroup quality;
-    private Button cancelButton;
+    private Button cancelButton, folderChoose, folderForget, saveButton;
+    private TextView folderStatus, savedTitle;
+    private LinearLayout savedList;
 
     private volatile boolean cancelled;
     /** Récupération des aperçus en cours, et demande de l'utilisateur d'ignorer les aperçus restants. */
     private volatile boolean fetchingPreviews, skipPreviews;
     private static boolean previewsRequested;
+    /** Nom du dossier Chat2Doc mis à jour par la dernière conversion, ou {@code null}. */
+    private static volatile String libraryName;
     private boolean busy;
     private Converter.Result result;
 
@@ -115,7 +124,15 @@ public class MainActivity extends Activity {
                 stage.setText("Annulation…");
             }
         });
-        findViewById(R.id.save).setOnClickListener(v -> save());
+        saveButton = findViewById(R.id.save);
+        saveButton.setOnClickListener(v -> save());
+        folderStatus = findViewById(R.id.folder_status);
+        folderChoose = findViewById(R.id.folder_choose);
+        folderForget = findViewById(R.id.folder_forget);
+        savedTitle = findViewById(R.id.saved_title);
+        savedList = findViewById(R.id.saved_list);
+        folderChoose.setOnClickListener(v -> chooseFolder());
+        folderForget.setOnClickListener(v -> forgetFolder());
         findViewById(R.id.share).setOnClickListener(v -> share());
         findViewById(R.id.open_word).setOnClickListener(v -> openWord());
         findViewById(R.id.again).setOnClickListener(v -> showHome());
@@ -231,10 +248,10 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 File jobs = new File(getCacheDir(), "jobs");
-                Zips.deleteRecursively(jobs); // on ne garde que la dernière conversion
+                File previousJob = keepLatestJob(jobs);
                 File job = new File(jobs, String.valueOf(System.currentTimeMillis()));
-                File in = new File(job, "entree"), out = new File(job, "archive"), tmp = new File(job, "tmp");
-                if (!in.mkdirs() || !out.mkdirs() || !tmp.mkdirs()) throw new IOException("Espace de travail indisponible.");
+                File in = new File(job, "entree"), work = new File(job, "archive"), tmp = new File(job, "tmp");
+                if (!in.mkdirs() || !work.mkdirs() || !tmp.mkdirs()) throw new IOException("Espace de travail indisponible.");
 
                 String hint = subject;
                 if (sharedText != null) {
@@ -250,9 +267,25 @@ public class MainActivity extends Activity {
                 opt.imageMaxPx = px;
                 opt.titleHint = hint;
                 opt.dayFirstByDefault = !Locale.getDefault().getCountry().equals("US");
-                Converter.Prepared prepared = Converter.prepare(in, out, tmp, opt, listener);
-                Zips.deleteRecursively(in);
-                ui.post(() -> askPreviews(prepared, tmp, listener));
+                Converter.Inspection ins = Converter.inspect(in, opt);
+
+                Library lib = Library.open(this);
+                if (lib != null) {
+                    // Dossier Chat2Doc : la discussion y est complétée si elle existe déjà
+                    opt.makeZip = false;
+                    if (previousJob != null) Zips.deleteRecursively(previousJob);
+                    Archive archive = lib.checkout(ins.safe, new File(work, ins.safe), listener);
+                    prepareThen(ins, archive, lib, in, tmp, opt, listener);
+                } else {
+                    // Sans dossier : fusion possible avec la conversion précédente de la même discussion
+                    File prevArchive = previousJob == null ? null : new File(new File(previousJob, "archive"), ins.safe);
+                    if (prevArchive != null && new File(prevArchive, Archive.TEXTS).isDirectory()) {
+                        ui.post(() -> askMerge(ins, prevArchive, previousJob, work, in, tmp, opt, listener));
+                    } else {
+                        if (previousJob != null) Zips.deleteRecursively(previousJob);
+                        prepareThen(ins, new Archive(new File(work, ins.safe), null), null, in, tmp, opt, listener);
+                    }
+                }
             } catch (ProgressListener.CancelledException e) {
                 ui.post(() -> finished(null, "Conversion annulée."));
             } catch (Throwable t) {
@@ -261,21 +294,74 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Discussion lue : s'il y a des liens, on propose d'aller chercher leurs aperçus, avec une estimation de durée. */
-    private void askPreviews(Converter.Prepared p, File tmp, ProgressListener listener) {
+    /** Supprime les anciennes conversions, sauf la dernière (qui peut servir à une fusion) ; la renvoie. */
+    private static File keepLatestJob(File jobs) {
+        File[] list = jobs.listFiles();
+        if (list == null || list.length == 0) return null;
+        java.util.Arrays.sort(list, (a, b) -> a.getName().compareTo(b.getName()));
+        for (int k = 0; k < list.length - 1; k++) Zips.deleteRecursively(list[k]);
+        return list[list.length - 1];
+    }
+
+    private void askMerge(Converter.Inspection ins, File prevArchive, File previousJob, File work, File in, File tmp,
+                          Converter.Options opt, ProgressListener listener) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Fusionner les exports ?")
+                .setMessage("Vous venez de convertir la discussion « " + ins.title + " ».\n\n"
+                        + "Faut-il y ajouter ce nouvel export ? C’est utile pour réunir un export « sans les médias » "
+                        + "(qui remonte plus loin) et un export « avec les médias » (messages récents avec photos) : "
+                        + "les messages communs ne sont pas dupliqués.")
+                .setCancelable(false)
+                .setPositiveButton("Fusionner", (d, w) -> worker.execute(() -> mergeThen(true, ins, prevArchive,
+                        previousJob, work, in, tmp, opt, listener)))
+                .setNegativeButton("Conversion séparée", (d, w) -> worker.execute(() -> mergeThen(false, ins,
+                        prevArchive, previousJob, work, in, tmp, opt, listener)))
+                .show();
+    }
+
+    private void mergeThen(boolean merge, Converter.Inspection ins, File prevArchive, File previousJob, File work,
+                           File in, File tmp, Converter.Options opt, ProgressListener listener) {
+        try {
+            File dest = new File(work, ins.safe);
+            if (merge && !prevArchive.renameTo(dest)) throw new IOException("Fusion impossible (espace de travail).");
+            Zips.deleteRecursively(previousJob);
+            prepareThen(ins, new Archive(dest, null), null, in, tmp, opt, listener);
+        } catch (ProgressListener.CancelledException e) {
+            ui.post(() -> finished(null, "Conversion annulée."));
+        } catch (Throwable t) {
+            ui.post(() -> finished(null, describe(t)));
+        }
+    }
+
+    /** Sur le fil de travail : analyse, puis question sur les aperçus. */
+    private void prepareThen(Converter.Inspection ins, Archive archive, Library lib, File in, File tmp,
+                             Converter.Options opt, ProgressListener listener) throws IOException {
+        Converter.Prepared prepared = Converter.prepare(ins, archive, tmp, opt, listener);
+        Zips.deleteRecursively(in);
+        ui.post(() -> askPreviews(prepared, lib, tmp, listener));
+    }
+
+    /** Discussion lue : s'il y a des liens nouveaux, on propose d'aller chercher leurs aperçus, avec une estimation de durée. */
+    private void askPreviews(Converter.Prepared p, Library lib, File tmp, ProgressListener listener) {
         previewsRequested = false;
-        if (p.links.isEmpty() || isFinishing() || isDestroyed()) {
-            finishConversion(p, false, tmp, listener);
+        if (p.linksToFetch.isEmpty() || isFinishing() || isDestroyed()) {
+            finishConversion(p, lib, false, tmp, listener);
             return;
         }
-        int n = p.links.size();
+        int n = p.linksToFetch.size();
+        int known = p.links.size() - n;
         StringBuilder msg = new StringBuilder();
-        msg.append("Cette discussion contient ").append(count(n, "lien", "liens")).append(" vers des sites web");
+        msg.append(known > 0 ? "Cette discussion contient " + count(n, "nouveau lien", "nouveaux liens")
+                : "Cette discussion contient " + count(n, "lien", "liens")).append(" vers des sites web");
         if (p.youtubeLinks > 0) {
             msg.append(p.youtubeLinks == n ? " (" + (n > 1 ? "toutes des vidéos" : "une vidéo") + " YouTube)"
                     : ", dont " + count(p.youtubeLinks, "vidéo", "vidéos") + " YouTube");
         }
-        msg.append(".\n\nChat2Doc peut récupérer sur Internet leur aperçu (titre et image), comme dans WhatsApp.\n\n")
+        msg.append(".");
+        if (known > 0) msg.append(" Les aperçus des ").append(count(known, "autre lien sont", "autres liens sont"))
+                .append(" déjà connus.");
+        msg.append("\n\nChat2Doc peut récupérer sur Internet leur aperçu (titre et image), comme dans WhatsApp.\n\n")
                 .append("Durée estimée : ").append(LinkPreviewFetcher.describeDuration(LinkPreviewFetcher.estimateSeconds(n)))
                 .append(" (selon la connexion ; le Wi-Fi est conseillé).\n\n")
                 .append("Sans aperçus, les liens restent cliquables dans le document.");
@@ -283,30 +369,37 @@ public class MainActivity extends Activity {
                 .setTitle("Aperçus des liens")
                 .setMessage(msg.toString())
                 .setCancelable(false)
-                .setPositiveButton("Récupérer les aperçus", (d, w) -> finishConversion(p, true, tmp, listener))
-                .setNegativeButton("Continuer sans", (d, w) -> finishConversion(p, false, tmp, listener))
+                .setPositiveButton("Récupérer les aperçus", (d, w) -> finishConversion(p, lib, true, tmp, listener))
+                .setNegativeButton("Continuer sans", (d, w) -> finishConversion(p, lib, false, tmp, listener))
                 .show();
     }
 
-    private void finishConversion(Converter.Prepared p, boolean withPreviews, File tmp, ProgressListener listener) {
+    private void finishConversion(Converter.Prepared p, Library lib, boolean withPreviews, File tmp,
+                                  ProgressListener listener) {
         previewsRequested = withPreviews;
         skipPreviews = false;
         worker.execute(() -> {
             try {
                 Map<String, LinkPreviewFetcher.Preview> previews = null;
+                Set<String> failed = null;
                 if (withPreviews) {
                     fetchingPreviews = true;
                     ui.post(() -> cancelButton.setText("Ignorer les aperçus restants"));
+                    failed = ConcurrentHashMap.newKeySet();
                     try {
-                        previews = new LinkPreviewFetcher().fetchAll(p.links, new File(tmp, "apercus"), listener,
-                                () -> skipPreviews);
+                        previews = new LinkPreviewFetcher().fetchAll(p.linksToFetch, new File(tmp, "apercus"), listener,
+                                () -> skipPreviews, failed);
                     } finally {
                         fetchingPreviews = false;
                         ui.post(() -> cancelButton.setText(R.string.cancel));
                     }
                 }
-                Converter.Result r = Converter.finish(p, previews, new AndroidImageProcessor(), listener);
-                Zips.deleteRecursively(tmp);
+                Converter.Result r = Converter.finish(p, previews, failed, new AndroidImageProcessor(), listener);
+                libraryName = null;
+                if (lib != null) {
+                    lib.commit(r.archive, r.folder.getName(), listener);
+                    libraryName = lib.name();
+                }
                 ui.post(() -> finished(r, null));
             } catch (ProgressListener.CancelledException e) {
                 ui.post(() -> finished(null, "Conversion annulée."));
@@ -380,6 +473,7 @@ public class MainActivity extends Activity {
         }
         result = r;
         summary.setText(describe(r));
+        saveButton.setVisibility(r.zip != null ? View.VISIBLE : View.GONE);
         home.setVisibility(View.GONE);
         working.setVisibility(View.GONE);
         done.setVisibility(View.VISIBLE);
@@ -393,12 +487,19 @@ public class MainActivity extends Activity {
                 .append(count(r.stats.perSender.size(), "participant", "participants"));
         if (r.stats.first != null) {
             if (r.stats.first.toLocalDate().equals(r.stats.last.toLocalDate())) {
-                sb.append(", le ").append(DATE.format(r.stats.first));
+                sb.append(", le ").append(DocxWriter.dateFr(r.stats.first.toLocalDate(), false));
             } else {
-                sb.append(", du ").append(DATE.format(r.stats.first)).append(" au ").append(DATE.format(r.stats.last));
+                sb.append(", du ").append(DocxWriter.dateFr(r.stats.first.toLocalDate(), false))
+                        .append(" au ").append(DocxWriter.dateFr(r.stats.last.toLocalDate(), false));
             }
         }
-        sb.append(".\n\n");
+        sb.append(".");
+        if (r.update) {
+            sb.append("\n").append(r.newMessages > 0 ? "Mise à jour : " + count(r.newMessages, "nouveau message", "nouveaux messages")
+                    : "Aucun nouveau message depuis la dernière fois").append(" (").append(count(r.exports, "export", "exports"))
+                    .append(" réunis).");
+        }
+        sb.append("\n\n");
         sb.append(count(r.embeddedPictures, "photo insérée", "photos insérées")).append(" dans le document Word, ")
                 .append(count(r.mediaFiles, "média rangé", "médias rangés")).append(" dans l’archive.");
         if (!r.stats.missing.isEmpty()) {
@@ -415,9 +516,13 @@ public class MainActivity extends Activity {
             else if (previewsRequested) sb.append(" : aucun aperçu obtenu (pas de connexion Internet ?)");
             sb.append(".");
         }
+        if (libraryName != null && r.zip == null) {
+            sb.append("\n\nEnregistré dans le dossier « ").append(libraryName).append(" » › ").append(r.folder.getName()).append(".");
+        }
         if (r.zip != null) {
             sb.append("\n\nArchive : ").append(r.zip.getName()).append(" (").append(size(r.zip.length())).append(")");
         }
+        if (r.warning != null) sb.append("\n\n⚠ ").append(r.warning);
         return sb.toString();
     }
 
@@ -457,7 +562,7 @@ public class MainActivity extends Activity {
         final ProgressListener listener = new UiProgress();
         worker.execute(() -> {
             try (InputStream is = new FileInputStream(zip);
-                 OutputStream os = getContentResolver().openOutputStream(target, "w")) {
+                 OutputStream os = getContentResolver().openOutputStream(target, "wt")) {
                 if (os == null) throw new IOException("Emplacement inaccessible.");
                 byte[] buf = new byte[1 << 16];
                 long total = zip.length(), copied = 0;
@@ -484,22 +589,27 @@ public class MainActivity extends Activity {
     }
 
     private void share() {
-        if (result == null || result.zip == null) return;
-        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.zip);
+        if (result == null) return;
+        // Archive .zip en mode sans dossier ; document Word seul avec un dossier Chat2Doc
+        File f = result.zip != null ? result.zip : result.docx;
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", f);
         Intent i = new Intent(Intent.ACTION_SEND);
-        i.setType("application/zip");
+        i.setType(result.zip != null ? "application/zip" : DOCX);
         i.putExtra(Intent.EXTRA_STREAM, uri);
         i.putExtra(Intent.EXTRA_SUBJECT, result.title + " — discussion WhatsApp");
-        i.setClipData(ClipData.newRawUri(result.zip.getName(), uri));
+        i.setClipData(ClipData.newRawUri(f.getName(), uri));
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(Intent.createChooser(i, getString(R.string.share)));
     }
 
     private void openWord() {
         if (result == null) return;
-        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.docx);
+        openDocument(FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.docx));
+    }
+
+    private void openDocument(Uri uri) {
         Intent i = new Intent(Intent.ACTION_VIEW);
-        i.setDataAndType(uri, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        i.setDataAndType(uri, DOCX);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
             startActivity(i);
@@ -517,6 +627,15 @@ public class MainActivity extends Activity {
             convert(Collections.singletonList(data.getData()), null, null);
         } else if (requestCode == REQ_SAVE && result != null) {
             saveTo(data.getData());
+        } else if (requestCode == REQ_FOLDER) {
+            try {
+                Library.choose(this, data.getData());
+                Toast.makeText(this, "Dossier Chat2Doc enregistré.", Toast.LENGTH_SHORT).show();
+            } catch (SecurityException e) {
+                showError("Android n’a pas accordé l’accès durable à ce dossier. Choisissez un dossier du téléphone "
+                        + "(par exemple dans Documents).");
+            }
+            refreshLibrary();
         }
     }
 
@@ -529,6 +648,102 @@ public class MainActivity extends Activity {
         working.setVisibility(View.GONE);
         done.setVisibility(View.GONE);
         error.setVisibility(View.GONE);
+        refreshLibrary();
+    }
+
+    // ================================================================================================
+    // Dossier Chat2Doc
+
+    private void chooseFolder() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(i, REQ_FOLDER);
+        } catch (ActivityNotFoundException e) {
+            showError("Aucun sélecteur de dossiers n’est disponible sur ce téléphone.");
+        }
+    }
+
+    private void forgetFolder() {
+        new AlertDialog.Builder(this)
+                .setTitle("Revenir au mode .zip ?")
+                .setMessage("Chat2Doc n’utilisera plus le dossier choisi : chaque conversion produira une archive .zip "
+                        + "indépendante. Le dossier et son contenu restent intacts sur le téléphone.")
+                .setPositiveButton("Revenir au mode .zip", (d, w) -> {
+                    Library.forget(this);
+                    refreshLibrary();
+                })
+                .setNegativeButton("Annuler", null)
+                .show();
+    }
+
+    /** Lit (hors du fil de l'interface) l'état du dossier Chat2Doc et la liste des discussions enregistrées. */
+    private void refreshLibrary() {
+        if (busy) return;
+        final boolean chosen = Library.treeUri(this) != null;
+        worker.execute(() -> {
+            Library lib = Library.open(this);
+            String name = lib == null ? null : lib.name();
+            List<Library.Entry> entries = lib == null ? new ArrayList<>() : lib.entries();
+            List<Uri> docs = new ArrayList<>();
+            for (Library.Entry e : entries) docs.add(lib.documentUri(e));
+            ui.post(() -> showLibrary(chosen, name, entries, docs));
+        });
+    }
+
+    private void showLibrary(boolean chosen, String name, List<Library.Entry> entries, List<Uri> docs) {
+        if (isFinishing() || isDestroyed()) return;
+        if (name != null) {
+            folderStatus.setText("Dossier « " + name + " » : chaque discussion y est conservée et complétée à chaque "
+                    + "nouvel export, au-delà des limites de WhatsApp.");
+            folderChoose.setText("Changer de dossier…");
+        } else if (chosen) {
+            folderStatus.setText("Le dossier choisi n’est plus accessible (supprimé ou déplacé). Choisissez-le à nouveau.");
+            folderChoose.setText("Choisir le dossier…");
+        } else {
+            folderStatus.setText("Aucun dossier : chaque conversion produit une archive .zip indépendante. Avec un dossier, "
+                    + "les discussions sont conservées sur le téléphone et complétées à chaque nouvel export.");
+            folderChoose.setText("Choisir le dossier…");
+        }
+        folderForget.setVisibility(chosen ? View.VISIBLE : View.GONE);
+
+        savedList.removeAllViews();
+        savedTitle.setVisibility(entries.isEmpty() ? View.GONE : View.VISIBLE);
+        float dp = getResources().getDisplayMetrics().density;
+        for (int k = 0; k < entries.size(); k++) {
+            Library.Entry e = entries.get(k);
+            Uri doc = docs.get(k);
+            TextView tv = new TextView(this);
+            StringBuilder t = new StringBuilder(e.title);
+            if (e.first != null && e.last != null) {
+                t.append("\n").append(DocxWriter.dateFr(e.first.toLocalDate(), false)).append(" → ")
+                        .append(DocxWriter.dateFr(e.last.toLocalDate(), false));
+            }
+            t.append("\n").append(count(e.messages, "message", "messages"));
+            if (e.updated != null) {
+                t.append(" · mis à jour le ").append(DocxWriter.dateFr(e.updated.toLocalDate(), false))
+                        .append(" à ").append(HOUR.format(e.updated));
+            }
+            android.text.SpannableString span = new android.text.SpannableString(t);
+            span.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, e.title.length(), 0);
+            span.setSpan(new android.text.style.ForegroundColorSpan(getColor(R.color.cg_blue)), 0, e.title.length(), 0);
+            tv.setText(span);
+            tv.setTextSize(14);
+            tv.setTextColor(getColor(R.color.text_main));
+            tv.setBackgroundResource(R.drawable.card);
+            int pad = (int) (14 * dp);
+            tv.setPadding(pad, pad, pad, pad);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = (int) (8 * dp);
+            tv.setLayoutParams(lp);
+            tv.setOnClickListener(v -> {
+                if (doc != null) openDocument(doc);
+                else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+            });
+            savedList.addView(tv);
+        }
     }
 
     private void showWorking() {
@@ -561,6 +776,8 @@ public class MainActivity extends Activity {
                 })
                 .show();
     }
+
+    private static final String DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
     private int qualityIndex() {
         int id = quality.getCheckedRadioButtonId();

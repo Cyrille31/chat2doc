@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -86,9 +87,11 @@ public final class LinkPreviewFetcher {
     /**
      * Récupère les aperçus de toutes les adresses, plusieurs à la fois.
      *
-     * @param skip vrai quand l'utilisateur demande d'ignorer les aperçus restants (on garde ceux déjà obtenus)
+     * @param skip   vrai quand l'utilisateur demande d'ignorer les aperçus restants (on garde ceux déjà obtenus)
+     * @param failed reçoit les adresses essayées sans succès (peut être {@code null} ; doit supporter les accès concurrents)
      */
-    public Map<String, Preview> fetchAll(List<String> urls, File dir, ProgressListener progress, BooleanSupplier skip) {
+    public Map<String, Preview> fetchAll(List<String> urls, File dir, ProgressListener progress, BooleanSupplier skip,
+                                         Set<String> failed) {
         Map<String, Preview> out = new ConcurrentHashMap<>();
         if (urls.isEmpty()) return out;
         //noinspection ResultOfMethodCallIgnored
@@ -105,6 +108,7 @@ public final class LinkPreviewFetcher {
                 if (progress.isCancelled() || skip.getAsBoolean()) return;
                 Preview p = fetch(url, dir);
                 if (p != null) out.put(url, p);
+                else if (failed != null) failed.add(url);
                 int d = done.incrementAndGet();
                 long elapsed = System.currentTimeMillis() - t0;
                 int remaining = (int) (elapsed / 1000.0 / d * (total - d));

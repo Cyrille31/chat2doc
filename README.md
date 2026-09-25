@@ -27,7 +27,7 @@ Famille été 2026/
 ├── Audio/                     ← messages vocaux et fichiers audio
 ├── Documents/                 ← PDF, Word, Excel…
 ├── Contacts/                  ← cartes de visite (.vcf)
-└── Texte original/            ← le fichier texte brut fourni par WhatsApp
+└── Texte original/            ← les fichiers texte bruts fournis par WhatsApp
 ```
 
 Le document Word comporte :
@@ -56,6 +56,34 @@ Le document Word comporte :
    **Partager**, ou **Ouvrir le document Word** directement sur le téléphone.
 
 On peut aussi lancer Chat2Doc et choisir un export `.zip` déjà enregistré.
+
+### Dossier Chat2Doc : un historique qui se complète
+
+Sur l'écran d'accueil, **Dossier Chat2Doc → Choisir le dossier…** permet de désigner un dossier du
+téléphone (par exemple `Documents/Chat2Doc`). Chaque discussion y a alors son propre dossier — le
+document Word et les sous-dossiers de médias — **complété à chaque nouvel export** :
+
+- les messages déjà connus ne sont pas dupliqués, les nouveaux s'ajoutent, les nouveaux médias
+  rejoignent les sous-dossiers ;
+- les photos déjà réduites et les aperçus de liens déjà obtenus sont réutilisés : une mise à jour
+  est beaucoup plus rapide qu'une première conversion ;
+- en exportant régulièrement (avant que les messages ne sortent de la fenêtre des ~10 000 derniers
+  messages exportés par WhatsApp), on conserve **l'historique complet, photos comprises**, sans
+  limite.
+
+L'écran d'accueil liste les **discussions enregistrées**, avec la période couverte, le nombre de
+messages et la date de la dernière mise à jour ; toucher une discussion ouvre son document Word.
+
+Chaque dossier de discussion contient aussi un sous-dossier caché `.chat2doc` (index des médias,
+photos réduites, aperçus des liens, textes des exports) : à conserver avec le reste.
+
+### Fusion d'exports (discussions très longues)
+
+WhatsApp limite l'export à environ 10 000 messages avec médias et 40 000 sans. Pour une longue
+discussion, exportez-la **sans les médias** puis **avec les médias**, et partagez les deux avec
+Chat2Doc : les messages anciens (sans photos) et récents (avec photos) sont réunis dans un seul
+document. Sans dossier Chat2Doc, l'appli propose cette fusion quand deux exports de la même
+discussion se suivent. Elle signale aussi un export qui semble tronqué par WhatsApp.
 
 ### Aperçus des liens
 
