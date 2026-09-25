@@ -24,7 +24,7 @@
         <item name="android:textColor">@color/cg_blue</item>
     </style>
 
-    <style name="Chat2Doc.Section">
+    <style name="Chat2Doc.Section" parent="">
         <item name="android:textColor">@color/cg_blue</item>
         <item name="android:textSize">13sp</item>
         <item name="android:textStyle">bold</item>
@@ -34,7 +34,7 @@
         <item name="android:layout_marginBottom">8dp</item>
     </style>
 
-    <style name="Chat2Doc.Body">
+    <style name="Chat2Doc.Body" parent="">
         <item name="android:textColor">@color/text_main</item>
         <item name="android:textSize">15sp</item>
         <item name="android:lineSpacingMultiplier">1.15</item>
