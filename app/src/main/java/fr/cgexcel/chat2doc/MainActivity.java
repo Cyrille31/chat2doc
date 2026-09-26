@@ -89,6 +89,8 @@ public class MainActivity extends Activity {
     private static boolean previewsRequested;
     /** Nom du dossier Chat2Doc mis à jour par la dernière conversion, ou {@code null}. */
     private static volatile String libraryName;
+    /** Éléments du partage qui n'ont pas pu être lus (pour le message d'erreur), ou {@code null}. */
+    private volatile String receiveReport;
     private boolean busy;
     private Converter.Result result;
 
@@ -254,6 +256,7 @@ public class MainActivity extends Activity {
 
         worker.execute(() -> {
             try {
+                receiveReport = null;
                 File jobs = new File(getCacheDir(), "jobs");
                 File previousJob = keepLatestJob(jobs);
                 File job = new File(jobs, String.valueOf(System.currentTimeMillis()));
@@ -420,32 +423,55 @@ public class MainActivity extends Activity {
     /** Copie les fichiers partagés dans {@code dir} (en décompressant les .zip). Renvoie le nom du .zip reçu, le cas échéant. */
     private String receive(List<Uri> uris, File dir, ProgressListener listener) throws IOException {
         String zipName = null;
-        int n = 0;
+        int n = 0, ok = 0;
+        StringBuilder report = new StringBuilder();
         for (Uri uri : uris) {
             if (listener.isCancelled()) throw new ProgressListener.CancelledException();
             listener.onProgress("Réception des fichiers", n++, uris.size());
             String name = displayName(uri);
             String type = getContentResolver().getType(uri);
-            boolean zip = name.toLowerCase(Locale.ROOT).endsWith(".zip")
-                    || "application/zip".equals(type) || "application/x-zip-compressed".equals(type);
+            File tmp = unique(dir, name + ".part");
             try (InputStream is = getContentResolver().openInputStream(uri)) {
-                if (is == null) continue;
-                if (zip) {
-                    Zips.unzip(new BufferedInputStream(is, 1 << 16), dir, listener);
-                    zipName = name;
-                } else {
-                    File dest = unique(dir, name);
-                    try (OutputStream os = new FileOutputStream(dest)) {
-                        byte[] buf = new byte[1 << 16];
-                        int r;
-                        while ((r = is.read(buf)) > 0) os.write(buf, 0, r);
-                    }
+                if (is == null) throw new IOException("flux vide");
+                try (OutputStream os = new FileOutputStream(tmp)) {
+                    byte[] buf = new byte[1 << 16];
+                    int r;
+                    while ((r = is.read(buf)) > 0) os.write(buf, 0, r);
                 }
-            } catch (SecurityException e) {
-                throw new IOException("L’accès à un fichier partagé a été refusé. Relancez l’export depuis WhatsApp.");
+            } catch (IOException | SecurityException | IllegalArgumentException e) {
+                // Un élément illisible (dossier, lien expiré...) ne doit pas bloquer les autres
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+                report.append("\n• ").append(name).append(" (").append(type).append(") : illisible");
+                continue;
+            }
+            ok++;
+            // On reconnaît le contenu lui-même : certaines versions de WhatsApp envoient des noms sans extension
+            byte[] head = new byte[4096];
+            int len;
+            try (InputStream in = new FileInputStream(tmp)) {
+                len = Math.max(0, in.read(head));
+            }
+            boolean zip = len >= 4 && head[0] == 'P' && head[1] == 'K' && head[2] == 3 && head[3] == 4;
+            if (zip) {
+                try (InputStream in = new BufferedInputStream(new FileInputStream(tmp), 1 << 16)) {
+                    Zips.unzip(in, dir, listener);
+                }
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+                zipName = name;
+            } else {
+                String finalName = name;
+                if (!name.toLowerCase(Locale.ROOT).endsWith(".txt") && name.indexOf('.') < 0
+                        && ChatParser.looksLikeChat(new String(head, 0, len, StandardCharsets.UTF_8))) {
+                    finalName = name + ".txt";
+                }
+                if (!tmp.renameTo(unique(dir, finalName))) throw new IOException("Espace de travail indisponible.");
             }
         }
         listener.onProgress("Réception des fichiers", uris.size(), uris.size());
+        receiveReport = report.length() == 0 ? null
+                : "Éléments reçus de WhatsApp : " + uris.size() + ", lisibles : " + ok + "." + report;
         return zipName;
     }
 
@@ -510,7 +536,7 @@ public class MainActivity extends Activity {
         sb.append("\n\n");
         if (r.volumes.size() > 1) {
             List<String> years = new ArrayList<>();
-            for (String v : r.rewritten) years.add(v.replaceAll("^.* - (\\d{4})\\.docx$", "$1"));
+            for (String v : r.rewritten) years.add(v.replaceAll("^(\\d{4}) - .*$", "$1"));
             sb.append(r.volumes.size()).append(" documents Word, un par année");
             if (r.update && !years.isEmpty() && years.size() < r.volumes.size()) {
                 sb.append(" (mis à jour : ").append(String.join(", ", years)).append(")");
@@ -544,7 +570,7 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
-    private static String describe(Throwable t) {
+    private String describe(Throwable t) {
         String m = String.valueOf(t.getMessage());
         if (t instanceof OutOfMemoryError) {
             return "Mémoire insuffisante. Choisissez « Photos compactes » et recommencez.";
@@ -553,7 +579,13 @@ public class MainActivity extends Activity {
             return "Espace de stockage insuffisant sur le téléphone. Libérez de la place (il faut environ "
                     + "deux fois la taille de l’export) puis recommencez.";
         }
-        return "La conversion a échoué.\n\n" + (t.getMessage() != null ? t.getMessage() : t.toString());
+        String msg = "La conversion a échoué.\n\n" + (t.getMessage() != null ? t.getMessage() : t.toString());
+        if (receiveReport != null) {
+            msg += "\n\n" + receiveReport + "\n\nSolution de secours : dans WhatsApp, exportez la discussion vers "
+                    + "« Mes fichiers » ou Google Drive (enregistrement), puis dans Chat2Doc touchez "
+                    + "« Convertir un export WhatsApp enregistré ».";
+        }
+        return msg;
     }
 
     // ================================================================================================
