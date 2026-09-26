@@ -6,7 +6,8 @@
 
     <string name="howto_title">Mode d’emploi</string>
     <string name="howto_text">1.  Dans WhatsApp, ouvrez la discussion à conserver.\n2.  Menu ⋮ → Plus → Exporter la discussion → Joindre les médias.\n3.  Dans la liste des applications, choisissez Chat2Doc.\n4.  Chat2Doc prépare une archive .zip : le document Word, et les photos, vidéos, messages vocaux et documents rangés dans des sous-dossiers.</string>
-    <string name="pick_zip">Choisir un export déjà enregistré (.zip)…</string>
+    <string name="pick_zip">Convertir un export WhatsApp enregistré (.zip)…</string>
+    <string name="pick_zip_note">Ce bouton sert à convertir un export WhatsApp que vous avez enregistré au lieu de le partager. Pour consulter vos documents et photos sur le téléphone, choisissez plutôt un dossier Chat2Doc ci-dessous.</string>
 
     <string name="folder_title">Dossier Chat2Doc</string>
     <string name="folder_choose">Choisir le dossier…</string>

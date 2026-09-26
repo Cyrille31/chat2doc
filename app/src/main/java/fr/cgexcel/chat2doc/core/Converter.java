@@ -338,7 +338,7 @@ public final class Converter {
 
         List<String> names = new ArrayList<>(), labels = new ArrayList<>();
         for (String v : byVolume.keySet()) {
-            names.add(v.isEmpty() ? p.safe + ".docx" : p.safe + " - " + v + ".docx");
+            names.add(v.isEmpty() ? p.safe + ".docx" : v + " - " + p.safe + ".docx"); // l'année d'abord : lisible même tronqué
             labels.add(v);
         }
         Map<String, String> colors = DocxWriter.colorsFor(p.messages);

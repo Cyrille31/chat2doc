@@ -21,8 +21,8 @@ Une archive `.zip` qui contient :
 
 ```
 Famille été 2026/
-├── Famille été 2026 - 2025.docx  ← la discussion mise en page, un document par année
-├── Famille été 2026 - 2026.docx
+├── 2025 - Famille été 2026.docx  ← la discussion mise en page, un document par année
+├── 2026 - Famille été 2026.docx
 ├── Photos/                    ← photos et autocollants, en taille d'origine
 ├── Videos/
 ├── Audio/                     ← messages vocaux et fichiers audio
@@ -56,7 +56,13 @@ Le document Word comporte :
 4. Une fois la conversion terminée : **Enregistrer l'archive…** (dans Téléchargements, sur Drive…),
    **Partager**, ou **Ouvrir le document Word** directement sur le téléphone.
 
-On peut aussi lancer Chat2Doc et choisir un export `.zip` déjà enregistré.
+On peut aussi lancer Chat2Doc et convertir un export WhatsApp `.zip` déjà enregistré.
+
+**Consulter les documents et les photos sur le téléphone** : en mode archive `.zip`, il faut d'abord
+décompresser l'archive (dans *Mes fichiers*, toucher le `.zip` puis *Extraire*). Le plus simple est
+de choisir un **dossier Chat2Doc** : tout y est rangé en clair, les photos s'ouvrent depuis le
+gestionnaire de fichiers ou la galerie, et les documents Word depuis la liste des discussions
+enregistrées de l'appli.
 
 ### Dossier Chat2Doc : un historique qui se complète
 
@@ -88,7 +94,8 @@ discussion se suivent. Elle signale aussi un export qui semble tronqué par What
 
 ### Un document Word par année
 
-Par défaut, Chat2Doc écrit **un document par année** (`Famille - 2025.docx`, `Famille - 2026.docx`…) :
+Par défaut, Chat2Doc écrit **un document par année** (`2025 - Famille.docx`, `2026 - Famille.docx`…,
+l'année en tête pour rester lisible même quand le nom est tronqué) :
 des fichiers plus légers, plus rapides à ouvrir, surtout sur téléphone. Chaque document a sa page
 de garde et cite les autres années. Avec un dossier Chat2Doc, seul le document de l'année qui a
 changé est réécrit lors d'une mise à jour. La case *Un document Word par année* permet de revenir

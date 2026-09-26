@@ -82,6 +82,14 @@
                 android:text="@string/pick_zip" />
 
             <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/pick_zip_note"
+                android:textColor="@color/text_soft"
+                android:textSize="13sp" />
+
+            <TextView
                 style="@style/Chat2Doc.Section"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

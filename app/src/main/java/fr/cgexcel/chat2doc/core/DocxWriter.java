@@ -261,7 +261,7 @@ public final class DocxWriter {
 
         if (volume != null && !otherVolumes.isEmpty()) {
             List<String> volumes = new ArrayList<>();
-            for (String v : otherVolumes) volumes.add(baseName + " - " + v + ".docx");
+            for (String v : otherVolumes) volumes.add(v + " - " + baseName + ".docx");
             para(w, "C2DCoverHeading", "", run("Autres années", ""));
             para(w, "C2DNote", "", run("Chaque année a son propre document, dans le même dossier : "
                     + String.join(", ", volumes) + ".", ""));
