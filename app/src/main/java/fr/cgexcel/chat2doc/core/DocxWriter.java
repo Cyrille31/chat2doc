@@ -273,7 +273,10 @@ public final class DocxWriter {
         para(w, "C2DNote", "<w:spacing w:before=\"480\"/>",
                 run("Document créé le " + dateFr(LocalDate.now(), false) + " avec Chat2Doc — CGExcel. "
                         + "Les photos, vidéos, messages vocaux et documents se trouvent dans les sous-dossiers "
-                        + "placés à côté de ce fichier : gardez-les ensemble pour que les liens fonctionnent.", ""));
+                        + "placés à côté de ce fichier : gardez-les ensemble pour que les liens fonctionnent, et ouvrez "
+                        + "ce document depuis son dossier (pas depuis une pièce jointe de messagerie ni un navigateur). "
+                        + "Sur téléphone, Word ne suit pas ces liens : ouvrez les pièces jointes depuis la fiche de la "
+                        + "discussion dans Chat2Doc.", ""));
     }
 
     private static int count(Stats s, MediaKind k) {

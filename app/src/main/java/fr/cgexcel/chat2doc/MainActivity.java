@@ -628,7 +628,7 @@ public class MainActivity extends Activity {
         pickResultDocument("Ouvrir quel document ?", this::openDocument);
     }
 
-    /** Un seul document : action directe ; plusieurs (un par période) : on demande lequel, le plus récent en tête. */
+    /** Un seul document : action directe ; plusieurs (un par période) : on demande lequel, du plus ancien au plus récent. */
     private void pickResultDocument(String title, java.util.function.Consumer<Uri> action) {
         List<String> names = result.volumes;
         List<Uri> uris = new ArrayList<>();
@@ -648,11 +648,11 @@ public class MainActivity extends Activity {
             return;
         }
         String[] labels = new String[names.size()];
-        for (int k = 0; k < names.size(); k++) labels[k] = names.get(names.size() - 1 - k).replaceAll("(?i)\\.docx$", "");
+        for (int k = 0; k < names.size(); k++) labels[k] = names.get(k).replaceAll("(?i)\\.docx$", "");
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setItems(labels, (d, which) -> {
-                    Uri u = uris.get(names.size() - 1 - which);
+                    Uri u = uris.get(which);
                     if (u != null) action.accept(u);
                     else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
                 })
@@ -840,7 +840,7 @@ public class MainActivity extends Activity {
 
         LinearLayout words = findViewById(R.id.discussion_words);
         words.removeAllViews();
-        for (int k = e.docxNames.size() - 1; k >= 0; k--) {
+        for (int k = 0; k < e.docxNames.size(); k++) {
             Uri u = docs.get(k);
             words.addView(item("📄  " + e.docxNames.get(k).replaceAll("(?i)\\.docx$", ""), v -> {
                 if (u != null) openDocument(u);

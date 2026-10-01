@@ -14,8 +14,8 @@ android {
         applicationId 'fr.cgexcel.chat2doc'
         minSdk 26
         targetSdk 35
-        versionCode 9
-        versionName '1.7'
+        versionCode 10
+        versionName '1.7.1'
     }
 
     // Signature des versions publiées : clé fournie par des variables d'environnement
