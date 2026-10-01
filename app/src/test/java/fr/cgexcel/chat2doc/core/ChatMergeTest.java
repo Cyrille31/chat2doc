@@ -38,7 +38,7 @@ public class ChatMergeTest {
                 "Vue du sommet",
                 "01/09/2026 17:30 - Sophie: Nouveau"), "IMG-20260820-WA0001.jpg");
 
-        List<Message> m = ChatMerge.merge(Arrays.asList(sans, avec));
+        List<Message> m = ChatMerge.mergeChronological(Arrays.asList(sans, avec));
         assertEquals(5, m.size());
         assertEquals("Bonne année !", m.get(0).text);
         assertEquals("ok", m.get(1).text);
@@ -46,6 +46,36 @@ public class ChatMergeTest {
         assertEquals(Collections.singletonList("IMG-20260820-WA0001.jpg"), m.get(3).attachments); // version avec photo
         assertEquals("Vue du sommet", m.get(3).text);
         assertEquals("Nouveau", m.get(4).text);
+    }
+
+    @Test
+    public void messageSupprimeDepuis() {
+        List<Message> avant = parse(String.join("\n",
+                "01/01/2026 10:00 - A: très ancien",
+                "01/10/2026 17:30 - A: un",
+                "01/10/2026 17:31 - B: à supprimer",
+                "01/10/2026 17:32 - A: trois"));
+        List<Message> apres = parse(String.join("\n",
+                "01/10/2026 17:30 - A: un",
+                "01/10/2026 17:32 - A: trois",
+                "01/10/2026 17:40 - B: nouveau"));
+        List<Message> m = ChatMerge.mergeChronological(Arrays.asList(avant, apres));
+        assertEquals(4, m.size());
+        assertEquals("très ancien", m.get(0).text);   // antérieur à l'export récent : conservé
+        assertEquals("un", m.get(1).text);
+        assertEquals("trois", m.get(2).text);          // « à supprimer » a disparu
+        assertEquals("nouveau", m.get(3).text);
+    }
+
+    @Test
+    public void exportSansMediasPlusRecent() {
+        // L'export récent sans médias ne fait pas perdre les photos d'un export plus ancien avec médias
+        List<Message> avec = parse("20/08/2026 10:05 - Paul: IMG-20260820-WA0001.jpg (fichier joint)\nVue",
+                "IMG-20260820-WA0001.jpg");
+        List<Message> sans = parse("20/08/2026 10:05 - Paul: <Médias omis>\nVue\n21/08/2026 09:00 - Paul: Suite");
+        List<Message> m = ChatMerge.mergeChronological(Arrays.asList(avec, sans));
+        assertEquals(2, m.size());
+        assertEquals(1, m.get(0).attachments.size());
     }
 
     @Test

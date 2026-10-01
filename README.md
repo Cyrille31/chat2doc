@@ -69,6 +69,9 @@ Chaque discussion a son propre dossier, **complété à chaque nouvel export** :
 
 - les messages déjà connus ne sont pas dupliqués, les nouveaux s'ajoutent, les nouveaux médias
   rejoignent les sous-dossiers ;
+- chaque nouvel export fait foi sur la période qu'il couvre : un message supprimé ou modifié dans
+  WhatsApp l'est aussi dans l'archive, tandis que les messages plus anciens que l'export (sortis de la
+  fenêtre de WhatsApp) restent conservés ;
 - les aperçus de liens déjà obtenus sont réutilisés, et seuls les documents Word dont le contenu a
   changé sont réécrits : une mise à jour est beaucoup plus rapide qu'une première conversion ;
 - en exportant régulièrement (avant que les messages ne sortent de la fenêtre des ~10 000 derniers

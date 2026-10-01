@@ -214,7 +214,11 @@ public final class Converter {
         textsDir.mkdirs();
         File[] previous = textsDir.listFiles((d, name) -> name.toLowerCase(Locale.ROOT).endsWith(".txt"));
         List<File> texts = new ArrayList<>(previous == null ? new ArrayList<>() : Arrays.asList(previous));
-        texts.sort((a, b) -> a.getName().compareTo(b.getName()));
+        // Ordre chronologique des exports (date inscrite dans le nom du fichier), indispensable à la fusion
+        texts.sort((a, b) -> {
+            int c = exportStamp(a.getName()).compareTo(exportStamp(b.getName()));
+            return c != 0 ? c : a.getName().compareTo(b.getName());
+        });
         boolean duplicate = false;
         for (File t : texts) {
             if (t.length() == ins.chat.length() && readUtf8(t).equals(newText)) duplicate = true;
@@ -239,7 +243,7 @@ public final class Converter {
         p.workDir = workDir;
         p.media = media;
         p.update = !older.isEmpty();
-        p.previousMessages = p.update ? countUser(ChatMerge.merge(older)) : 0;
+        p.previousMessages = p.update ? countUser(ChatMerge.mergeChronological(older)) : 0;
 
         List<List<Message>> all = new ArrayList<>(older);
         if (!duplicate) {
@@ -254,7 +258,7 @@ public final class Converter {
             archive.markChanged(Archive.TEXTS + "/" + dest.getName());
         }
         p.exports = all.size();
-        p.messages = ChatMerge.merge(all);
+        p.messages = ChatMerge.mergeChronological(all);
         p.totalMessages = countUser(p.messages);
         p.warning = truncationWarning(fresh, total > 0, p.messages);
 
@@ -555,6 +559,14 @@ public final class Converter {
         } catch (java.security.NoSuchAlgorithmException e) {
             return String.valueOf(System.nanoTime());
         }
+    }
+
+    private static final Pattern EXPORT_STAMP = Pattern.compile("export du (\\d{4}-\\d{2}-\\d{2} \\d{2}h\\d{2})");
+
+    /** Date de l'export inscrite dans le nom du fichier texte (vide si absente : placé en premier). */
+    private static String exportStamp(String name) {
+        java.util.regex.Matcher m = EXPORT_STAMP.matcher(name);
+        return m.find() ? m.group(1) : "";
     }
 
     private static int countUser(List<Message> msgs) {
