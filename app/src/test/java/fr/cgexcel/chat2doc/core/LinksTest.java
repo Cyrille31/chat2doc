@@ -1,6 +1,8 @@
 /*
  * Chat2Doc — CGExcel
  * (c) 2026 Cyrille Gindre — Licence MIT + BAL 1.0 (Bonne Action License)
+ * En échange, une seule chose vous est demandée, sur l'honneur : faire une bonne action chaque jour.
+ * Aider un voisin, sourire à un inconnu, ramasser un papier… c'est vous qui voyez.
  */
 package fr.cgexcel.chat2doc.core;
 

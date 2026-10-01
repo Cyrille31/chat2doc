@@ -1,6 +1,8 @@
 /*
  * Chat2Doc — CGExcel
  * (c) 2026 Cyrille Gindre — Licence MIT + BAL 1.0 (Bonne Action License)
+ * En échange, une seule chose vous est demandée, sur l'honneur : faire une bonne action chaque jour.
+ * Aider un voisin, sourire à un inconnu, ramasser un papier… c'est vous qui voyez.
  */
 package fr.cgexcel.chat2doc.core;
 
@@ -39,6 +41,8 @@ import java.util.regex.Pattern;
  */
 public final class Converter {
 
+    public static final int SPLIT_NONE = 0, SPLIT_YEAR = 1, SPLIT_AUTO = 2;
+
     /** Réglages de la conversion. */
     public static final class Options {
         /** Plus grand côté des photos insérées dans le Word, en pixels (0 = taille d'origine). */
@@ -49,8 +53,10 @@ public final class Converter {
         public String titleHint;
         /** Produire l'archive .zip finale (mode sans dossier Chat2Doc). */
         public boolean makeZip = true;
-        /** Un document Word par année (sinon un seul document). */
-        public boolean splitByYear = true;
+        /** Découpage du Word : un seul document, un par année, ou regroupement d'années sous {@link #maxBytes}. */
+        public int split = SPLIT_AUTO;
+        /** Taille visée par document en découpage automatique (une année seule peut la dépasser). */
+        public long maxBytes = 20L * 1024 * 1024;
     }
 
     /** Export reçu : fichier de la discussion et nom. */
@@ -319,11 +325,8 @@ public final class Converter {
         }
 
         // Documents Word : un par année (ou un seul) ; seuls ceux dont le contenu a changé sont réécrits
-        Map<String, List<Message>> byVolume = new LinkedHashMap<>();
-        for (Message m : p.messages) {
-            String v = p.opt.splitByYear ? String.valueOf(m.time.getYear()) : "";
-            byVolume.computeIfAbsent(v, x -> new ArrayList<>()).add(m);
-        }
+        ThumbCache cache = new ThumbCache(archive);
+        Map<String, List<Message>> byVolume = volumes(p, cache);
         Map<String, String> oldPrints = new HashMap<>();
         Set<String> oldDocs = new HashSet<>();
         for (String[] row : archive.readTable(VOLUMES)) {
@@ -343,7 +346,6 @@ public final class Converter {
         }
         Map<String, String> colors = DocxWriter.colorsFor(p.messages);
         File tmp = new File(p.workDir, "docx-tmp");
-        ThumbCache cache = new ThumbCache(archive);
         List<String> volumeRows = new ArrayList<>();
         List<String[]> rowsVol = new ArrayList<>();
         int embedded = 0, k = 0;
@@ -421,6 +423,70 @@ public final class Converter {
     }
 
     // ------------------------------------------------------------------------------------------------
+
+    /**
+     * Répartition des messages en documents. En mode automatique, les années consécutives sont
+     * regroupées tant que la taille estimée reste sous le seuil ; une année seule peut le dépasser.
+     * Libellés : « » (document unique), « 2025 » ou « 2025-2027 ».
+     */
+    private static Map<String, List<Message>> volumes(Prepared p, ThumbCache cache) {
+        Map<String, List<Message>> out = new LinkedHashMap<>();
+        if (p.opt.split == SPLIT_NONE || p.messages.isEmpty()) {
+            out.put("", p.messages);
+            return out;
+        }
+        Map<Integer, List<Message>> years = new java.util.TreeMap<>();
+        for (Message m : p.messages) years.computeIfAbsent(m.time.getYear(), x -> new ArrayList<>()).add(m);
+        if (p.opt.split == SPLIT_YEAR) {
+            for (Map.Entry<Integer, List<Message>> e : years.entrySet()) out.put(String.valueOf(e.getKey()), e.getValue());
+            return out;
+        }
+        List<List<Integer>> groups = new ArrayList<>();
+        List<Integer> cur = new ArrayList<>();
+        long curSize = 0;
+        for (Map.Entry<Integer, List<Message>> e : years.entrySet()) {
+            long size = estimate(e.getValue(), p, cache);
+            if (!cur.isEmpty() && curSize + size > p.opt.maxBytes) {
+                groups.add(cur);
+                cur = new ArrayList<>();
+                curSize = 0;
+            }
+            cur.add(e.getKey());
+            curSize += size;
+        }
+        groups.add(cur);
+        for (List<Integer> g : groups) {
+            String label = groups.size() == 1 ? ""
+                    : g.size() == 1 ? String.valueOf(g.get(0)) : g.get(0) + "-" + g.get(g.size() - 1);
+            List<Message> msgs = new ArrayList<>();
+            for (Integer y : g) msgs.addAll(years.get(y));
+            out.put(label, msgs);
+        }
+        return out;
+    }
+
+    /** Taille estimée d'un document Word contenant ces messages (photos réduites comprises). */
+    private static long estimate(List<Message> msgs, Prepared p, ThumbCache cache) {
+        int px = p.opt.imageMaxPx;
+        long total = 20_000;
+        for (Message m : msgs) {
+            total += 300 + (m.text == null ? 0 : m.text.length() / 3);
+            for (String a : m.attachments) {
+                MediaFile mf = p.media.get(a.toLowerCase(Locale.ROOT));
+                if (mf == null || !mf.kind.isImage()) continue;
+                if (px == 0) {
+                    total += mf.size;
+                    continue;
+                }
+                ThumbCache.Entry e = cache.get(mf.relativePath + "|" + px);
+                long est = e != null ? (long) (e.width * (long) e.height * 0.22)
+                        : (long) Math.min(mf.size, px * (long) px * 0.75 * 0.22);
+                total += mf.kind == MediaKind.STICKER ? Math.min(est, 40_000) : est;
+            }
+            if (m.text != null && !m.text.isEmpty() && m.text.contains("://")) total += 20_000;
+        }
+        return total;
+    }
 
     /** Autres volumes, pour la page de garde (« Les autres années : 2024, 2026 »). */
     private static List<String> otherLabels(List<String> labels, String current) {

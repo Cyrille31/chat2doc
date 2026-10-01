@@ -1,6 +1,8 @@
 /*
  * Chat2Doc — CGExcel
  * (c) 2026 Cyrille Gindre — Licence MIT + BAL 1.0 (Bonne Action License)
+ * En échange, une seule chose vous est demandée, sur l'honneur : faire une bonne action chaque jour.
+ * Aider un voisin, sourire à un inconnu, ramasser un papier… c'est vous qui voyez.
  */
 package fr.cgexcel.chat2doc.core;
 
@@ -211,7 +213,8 @@ public final class DocxWriter {
             String period = s.first.toLocalDate().equals(s.last.toLocalDate())
                     ? "le " + dateFr(s.first.toLocalDate(), false)
                     : "du " + dateFr(s.first.toLocalDate(), false) + " au " + dateFr(s.last.toLocalDate(), false);
-            para(w, "C2DSubtitle", "", run((volume != null ? "Année " + volume + " \u00b7 " : "")
+            para(w, "C2DSubtitle", "", run((volume != null ? (volume.contains("-")
+                    ? "Années " + volume.replace("-", " à ") : "Année " + volume) + " \u00b7 " : "")
                     + "Discussion WhatsApp " + period, ""));
         }
 
@@ -263,7 +266,7 @@ public final class DocxWriter {
             List<String> volumes = new ArrayList<>();
             for (String v : otherVolumes) volumes.add(v + " - " + baseName + ".docx");
             para(w, "C2DCoverHeading", "", run("Autres années", ""));
-            para(w, "C2DNote", "", run("Chaque année a son propre document, dans le même dossier : "
+            para(w, "C2DNote", "", run("Les autres années sont dans d’autres documents, dans le même dossier : "
                     + String.join(", ", volumes) + ".", ""));
         }
 

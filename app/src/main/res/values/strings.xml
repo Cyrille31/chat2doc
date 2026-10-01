@@ -4,34 +4,40 @@
     <string name="share_label">Chat2Doc (Word)</string>
     <string name="tagline">Vos discussions WhatsApp, reliées en document Word</string>
 
-    <string name="howto_title">Mode d’emploi</string>
-    <string name="howto_text">1.  Dans WhatsApp, ouvrez la discussion à conserver.\n2.  Menu ⋮ → Plus → Exporter la discussion → Joindre les médias.\n3.  Dans la liste des applications, choisissez Chat2Doc.\n4.  Chat2Doc prépare une archive .zip : le document Word, et les photos, vidéos, messages vocaux et documents rangés dans des sous-dossiers.</string>
-    <string name="pick_zip">Convertir un export WhatsApp enregistré (.zip)…</string>
-    <string name="pick_zip_note">Ce bouton sert à convertir un export WhatsApp que vous avez enregistré au lieu de le partager. Pour consulter vos documents et photos sur le téléphone, choisissez plutôt un dossier Chat2Doc ci-dessous.</string>
-
-    <string name="folder_title">Dossier Chat2Doc</string>
-    <string name="folder_choose">Choisir le dossier…</string>
-    <string name="folder_forget">Revenir au mode .zip</string>
+    <string name="howto_text">Dans WhatsApp, ouvrez la discussion à conserver, puis menu ⋮ → Plus → Exporter la discussion → Joindre les médias, et choisissez Chat2Doc dans la liste.</string>
+    <string name="pick_zip">Convertir un export WhatsApp (.zip)…</string>
+    <string name="folder_needed">Choisissez d’abord le dossier du téléphone où Chat2Doc rangera vos discussions (par exemple Documents/Chat2Doc) : chacune y aura son dossier, avec le document Word et les sous-dossiers de photos, vidéos, messages vocaux et documents.</string>
     <string name="saved_title">Discussions enregistrées</string>
+    <string name="saved_empty">Aucune discussion enregistrée pour l’instant.</string>
+
+    <string name="settings">Réglages</string>
+    <string name="folder_title">Dossier de sauvegarde</string>
+    <string name="folder_choose">Choisir le dossier…</string>
 
     <string name="quality_title">Photos dans le document Word</string>
     <string name="quality_small">Compactes (800 px) — document léger</string>
     <string name="quality_standard">Standard (1280 px) — recommandé</string>
     <string name="quality_original">Taille d’origine — document lourd</string>
-    <string name="split_year">Un document Word par année (conseillé pour les longues discussions : fichiers plus légers)</string>
-    <string name="quality_note">Dans tous les cas, les photos originales sont conservées dans le dossier « Photos » de l’archive.</string>
+    <string name="quality_note">Dans tous les cas, les photos originales sont conservées dans le dossier « Photos » de la discussion.</string>
+
+    <string name="split_title">Découpage du document Word</string>
+    <string name="split_none">Un seul document</string>
+    <string name="split_year">Un document par année</string>
+    <string name="split_auto">Automatique : regrouper les années</string>
+    <string name="split_max_before">jusqu’à</string>
+    <string name="split_max_after">Mo par document</string>
+    <string name="split_note">Les fichiers portent alors le nom des années couvertes (« 2025 - … » ou « 2023-2025 - … »). Une année qui dépasse à elle seule cette taille a son propre document, simplement plus gros. La taille est estimée avant l’écriture.</string>
+
+    <string name="about_title">À propos</string>
+    <string name="source_code">Code source sur GitHub</string>
+    <string name="back_home">Retour à l’accueil</string>
 
     <string name="progress_title">Conversion en cours</string>
     <string name="cancel">Annuler</string>
 
-    <string name="result_title">Archive prête</string>
-    <string name="save">Enregistrer l’archive…</string>
-    <string name="share">Partager l’archive</string>
+    <string name="result_title">✓ Archive enregistrée</string>
+    <string name="share">Partager le document Word</string>
     <string name="open_word">Ouvrir le document Word</string>
-    <string name="new_conversion">Nouvelle conversion</string>
 
-    <string name="footer">© 2026 Cyrille Gindre — CGExcel\nLicence MIT + BAL 1.0 (Bonne Action License)</string>
-    <string name="bal_title">BAL 1.0 — Bonne Action License</string>
-    <string name="bal_text">Chat2Doc est un logiciel libre, distribué sous licence MIT : vous pouvez l’utiliser, le copier, le modifier et le redistribuer librement.\n\nEn échange, une seule chose vous est demandée, sur l’honneur : faites une bonne action chaque jour.\n\nCe vœu n’est pas une condition juridique : il ne restreint aucun de vos droits et ne pas le tenir ne vous retire rien. Il compte uniquement sur votre bonne volonté — et c’est bien là tout son intérêt.\n\nChat2Doc n’est ni affilié à WhatsApp ni approuvé par WhatsApp ou Meta. Tout le traitement se fait sur votre téléphone. Internet ne sert qu’à récupérer les aperçus des liens, et seulement si vous l’acceptez : aucun contenu de vos discussions n’est envoyé.</string>
-    <string name="ok">Promis</string>
+    <string name="footer">© 2026 Cyrille Gindre — CGExcel</string>
 </resources>

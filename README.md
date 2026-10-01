@@ -17,12 +17,13 @@ téléphone, et rien de vos discussions n'est envoyé sur Internet.
 
 ## Ce que produit Chat2Doc
 
-Une archive `.zip` qui contient :
+Dans le **dossier de sauvegarde** choisi sur le téléphone (par exemple `Documents/Chat2Doc`), un
+dossier par discussion, que l'on parcourt et ouvre directement :
 
 ```
-Famille été 2026/
-├── 2025 - Famille été 2026.docx  ← la discussion mise en page, un document par année
-├── 2026 - Famille été 2026.docx
+Famille/
+├── 2023-2024 - Famille.docx   ← la discussion mise en page (découpée selon la taille choisie)
+├── 2025 - Famille.docx
 ├── Photos/                    ← photos et autocollants, en taille d'origine
 ├── Videos/
 ├── Audio/                     ← messages vocaux et fichiers audio
@@ -53,22 +54,18 @@ Le document Word comporte :
 1. Dans WhatsApp, ouvrez la discussion à conserver.
 2. Menu **⋮ → Plus → Exporter la discussion → Joindre les médias**.
 3. Dans la liste des applications, choisissez **Chat2Doc**.
-4. Une fois la conversion terminée : **Enregistrer l'archive…** (dans Téléchargements, sur Drive…),
-   **Partager**, ou **Ouvrir le document Word** directement sur le téléphone.
+4. La première fois, Chat2Doc demande le **dossier de sauvegarde** (par exemple
+   `Documents/Chat2Doc`, à créer dans le sélecteur).
+5. Une fois la conversion terminée (« Archive enregistrée ») : **Ouvrir le document Word** ou le
+   **Partager**.
 
-On peut aussi lancer Chat2Doc et convertir un export WhatsApp `.zip` déjà enregistré.
+L'écran d'accueil propose aussi **Convertir un export WhatsApp (.zip)…** pour un export enregistré
+au lieu d'être partagé, et liste les **discussions enregistrées**. Le bouton **Réglages** donne
+accès au dossier de sauvegarde, à la taille des photos, au découpage du document et à la licence.
 
-**Consulter les documents et les photos sur le téléphone** : en mode archive `.zip`, il faut d'abord
-décompresser l'archive (dans *Mes fichiers*, toucher le `.zip` puis *Extraire*). Le plus simple est
-de choisir un **dossier Chat2Doc** : tout y est rangé en clair, les photos s'ouvrent depuis le
-gestionnaire de fichiers ou la galerie, et les documents Word depuis la liste des discussions
-enregistrées de l'appli.
+### Un historique qui se complète
 
-### Dossier Chat2Doc : un historique qui se complète
-
-Sur l'écran d'accueil, **Dossier Chat2Doc → Choisir le dossier…** permet de désigner un dossier du
-téléphone (par exemple `Documents/Chat2Doc`). Chaque discussion y a alors son propre dossier — le
-document Word et les sous-dossiers de médias — **complété à chaque nouvel export** :
+Chaque discussion a son propre dossier, **complété à chaque nouvel export** :
 
 - les messages déjà connus ne sont pas dupliqués, les nouveaux s'ajoutent, les nouveaux médias
   rejoignent les sous-dossiers ;
@@ -79,7 +76,8 @@ document Word et les sous-dossiers de médias — **complété à chaque nouvel 
   limite.
 
 L'écran d'accueil liste les **discussions enregistrées**, avec la période couverte, le nombre de
-messages et la date de la dernière mise à jour ; toucher une discussion ouvre son document Word.
+messages et la date de la dernière mise à jour ; toucher une discussion ouvre son document Word
+(ou propose de choisir parmi ses documents).
 
 Chaque dossier de discussion contient aussi un sous-dossier caché `.chat2doc` (index des médias,
 photos réduites, aperçus des liens, textes des exports) : à conserver avec le reste.
@@ -89,17 +87,21 @@ photos réduites, aperçus des liens, textes des exports) : à conserver avec le
 WhatsApp limite l'export à environ 10 000 messages avec médias et 40 000 sans. Pour une longue
 discussion, exportez-la **sans les médias** puis **avec les médias**, et partagez les deux avec
 Chat2Doc : les messages anciens (sans photos) et récents (avec photos) sont réunis dans un seul
-document. Sans dossier Chat2Doc, l'appli propose cette fusion quand deux exports de la même
-discussion se suivent. Elle signale aussi un export qui semble tronqué par WhatsApp.
+document. L'appli signale aussi un export qui semble tronqué par WhatsApp.
 
-### Un document Word par année
+### Découpage du document Word
 
-Par défaut, Chat2Doc écrit **un document par année** (`2025 - Famille.docx`, `2026 - Famille.docx`…,
-l'année en tête pour rester lisible même quand le nom est tronqué) :
-des fichiers plus légers, plus rapides à ouvrir, surtout sur téléphone. Chaque document a sa page
-de garde et cite les autres années. Avec un dossier Chat2Doc, seul le document de l'année qui a
-changé est réécrit lors d'une mise à jour. La case *Un document Word par année* permet de revenir
-à un document unique.
+Dans **Réglages → Découpage du document Word** :
+
+- **Un seul document** ;
+- **Un document par année** ;
+- **Automatique** (par défaut) : les années consécutives sont regroupées tant que le document
+  reste sous la taille choisie (20 Mo par défaut). Les fichiers portent le nom des années couvertes,
+  en tête pour rester lisibles même tronqués : `2023-2024 - Famille.docx`, `2025 - Famille.docx`…
+  Une année qui dépasse à elle seule la taille a son propre document, simplement plus gros.
+
+Chaque document a sa page de garde et cite les autres. Lors d'une mise à jour, seuls les documents
+dont le contenu a changé sont réécrits.
 
 ### Réactions (émojis sous les messages)
 
@@ -182,17 +184,17 @@ puis, dans *Settings → Secrets and variables → Actions* du dépôt, créez l
 | Dossier | Rôle |
 |---|---|
 | `app/src/main/java/fr/cgexcel/chat2doc/core/` | Moteur de conversion en Java pur, sans dépendance à Android : analyse de l'export (`ChatParser`), rangement des médias et archive (`Converter`, `Zips`), écriture du document Word au format Office Open XML (`DocxWriter`). |
-| `app/src/main/java/fr/cgexcel/chat2doc/` | Application Android : réception du partage, interface, préparation des photos (`AndroidImageProcessor`). |
+| `app/src/main/java/fr/cgexcel/chat2doc/` | Application Android : réception du partage, interface, dossier de sauvegarde (`Library`), préparation des photos (`AndroidImageProcessor`). |
 | `app/src/test/` | Tests unitaires du moteur. |
 | `docs/logo/` | Logo (SVG et PNG) et bannière. |
 
-Le document Word est écrit directement, sans bibliothèque externe : l'application reste légère
-et ne demande aucune permission.
+Le document Word est écrit directement, sans bibliothèque externe : l'application reste légère.
 
 ## Confidentialité
 
-Chat2Doc n'accède ni aux contacts ni au stockage : les fichiers lui sont confiés par le menu de
-partage et repartent par le sélecteur de fichiers d'Android. Sa seule permission est l'accès à
+Chat2Doc n'accède ni aux contacts ni au reste du stockage : les fichiers lui sont confiés par le
+menu de partage, et il n'écrit que dans le dossier de sauvegarde que vous lui avez désigné. Sa seule
+permission est l'accès à
 Internet, utilisé **uniquement** pour les aperçus des liens, et seulement si vous l'acceptez : il
 consulte alors les pages concernées, comme le ferait un navigateur, sans rien envoyer de vos
 discussions. Rien ne quitte le téléphone sans votre action.
@@ -205,8 +207,9 @@ WhatsApp LLC.
 Ce logiciel est publié sous [licence MIT](LICENSE) : utilisation, copie, modification et
 redistribution libres, y compris en usage professionnel.
 
-Il est accompagné de la **BAL 1.0 — [Bonne Action License](BAL.md)** : un vœu sur l'honneur, et non
-une condition juridique. Vous êtes simplement invité à **faire une bonne action chaque jour**. Ne
-pas le faire ne vous retire aucun droit.
+Il est accompagné de la **BAL 1.0 — [Bonne Action License](BAL.md)** : en échange, une seule chose
+vous est demandée, sur l'honneur : **faire une bonne action chaque jour**. Aider un voisin, sourire à
+un inconnu, ramasser un papier… c'est vous qui voyez. Ce vœu n'est pas une condition juridique : ne
+pas le tenir ne vous retire aucun droit.
 
 © 2026 Cyrille — CGExcel
