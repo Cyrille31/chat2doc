@@ -90,10 +90,9 @@ public final class Archive {
     /** Fichiers à supprimer de l'archive de référence (chemins relatifs). */
     public final Set<String> removed = new LinkedHashSet<>();
 
-    /** Supprime un fichier de l'archive (localement, et de l'archive de référence lors de la recopie). */
+    /** Supprime un fichier ou un dossier de l'archive (localement, et de l'archive de référence lors de la recopie). */
     public void remove(String rel) {
-        //noinspection ResultOfMethodCallIgnored
-        file(rel).delete();
+        Zips.deleteRecursively(file(rel));
         changed.remove(rel);
         removed.add(rel);
     }

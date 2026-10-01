@@ -69,8 +69,8 @@ Chaque discussion a son propre dossier, **complété à chaque nouvel export** :
 
 - les messages déjà connus ne sont pas dupliqués, les nouveaux s'ajoutent, les nouveaux médias
   rejoignent les sous-dossiers ;
-- les photos déjà réduites et les aperçus de liens déjà obtenus sont réutilisés : une mise à jour
-  est beaucoup plus rapide qu'une première conversion ;
+- les aperçus de liens déjà obtenus sont réutilisés, et seuls les documents Word dont le contenu a
+  changé sont réécrits : une mise à jour est beaucoup plus rapide qu'une première conversion ;
 - en exportant régulièrement (avant que les messages ne sortent de la fenêtre des ~10 000 derniers
   messages exportés par WhatsApp), on conserve **l'historique complet, photos comprises**, sans
   limite.
@@ -80,12 +80,14 @@ messages et la date de la dernière mise à jour ; toucher une discussion ouvre 
 (ou propose de choisir parmi ses documents).
 
 Toucher une discussion ouvre sa **fiche** : ses documents Word, et la liste de ses **pièces jointes**
-(PDF, vidéos, messages vocaux, contacts…), qui s'ouvrent d'un toucher dans l'application adaptée du
-téléphone. C'est utile car Word sur Android ne sait pas suivre les liens vers ces fichiers (sur PC,
+(PDF, vidéos, messages vocaux, contacts…), classées par type **dans l'ordre de la discussion**, avec le
+mois en intertitre ; elles s'ouvrent d'un toucher dans l'application adaptée du téléphone. Toucher un
+document Word l'ouvre et réduit la liste aux pièces jointes de ce document. C'est utile car Word sur Android ne sait pas suivre les liens vers ces fichiers (sur PC,
 les liens du document fonctionnent normalement).
 
-Chaque dossier de discussion contient aussi un sous-dossier caché `.chat2doc` (index des médias,
-photos réduites, aperçus des liens, textes des exports) : à conserver avec le reste.
+Chaque dossier de discussion contient aussi un petit sous-dossier caché `.chat2doc` (index des
+médias, aperçus des liens, découpage des documents) : quelques dizaines de Ko, indispensables aux mises
+à jour suivantes, à conserver avec le reste.
 
 ### Fusion d'exports (discussions très longues)
 

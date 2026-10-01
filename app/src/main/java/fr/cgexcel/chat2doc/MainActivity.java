@@ -838,15 +838,11 @@ public class MainActivity extends Activity {
         }
         ((TextView) findViewById(R.id.discussion_info)).setText(info);
 
-        LinearLayout words = findViewById(R.id.discussion_words);
-        words.removeAllViews();
-        for (int k = 0; k < e.docxNames.size(); k++) {
-            Uri u = docs.get(k);
-            words.addView(item("📄  " + e.docxNames.get(k).replaceAll("(?i)\\.docx$", ""), v -> {
-                if (u != null) openDocument(u);
-                else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
-            }));
-        }
+        ficheEntry = e;
+        ficheDocs = docs;
+        ficheVolume = null;
+        piecesRows = null;
+        renderWords();
 
         LinearLayout att = findViewById(R.id.discussion_attachments);
         att.removeAllViews();
@@ -854,36 +850,163 @@ public class MainActivity extends Activity {
         loading.setText("Lecture du dossier…");
         loading.setTextColor(getColor(R.color.text_soft));
         att.addView(loading);
-        final String[][] subs = {{"Documents", "Documents"}, {"Videos", "Vidéos"}, {"Audio", "Messages vocaux et audio"},
-                {"Contacts", "Contacts"}, {"Autres", "Autres fichiers"}};
         worker.execute(() -> {
             Library lib = Library.open(this);
-            List<List<Library.Node>> lists = new ArrayList<>();
-            for (String[] sub : subs) lists.add(lib == null ? new ArrayList<>() : lib.files(e.folder, sub[0]));
+            List<String[]> rows = new ArrayList<>();
+            List<Uri> uris = new ArrayList<>();
+            List<List<Library.Node>> folders = new ArrayList<>();
+            if (lib != null) {
+                // Pièces jointes dans l'ordre de la discussion (archives créées depuis la version 1.8)
+                for (String[] r : lib.table(e.folder, Converter.PIECES)) {
+                    if (r.length < 5) continue;
+                    rows.add(r);
+                    uris.add(lib.fileUri(e.folder, r[3]));
+                }
+                if (rows.isEmpty()) {
+                    for (String[] sub : SUBS) folders.add(lib.files(e.folder, sub[0]));
+                }
+            }
             ui.post(() -> {
-                if (discussion.getVisibility() != View.VISIBLE) return;
-                att.removeAllViews();
-                boolean any = false;
-                for (int k = 0; k < subs.length; k++) {
-                    List<Library.Node> files = lists.get(k);
-                    if (files.isEmpty()) continue;
-                    any = true;
-                    TextView h = new TextView(this);
-                    h.setText(subs[k][1] + " (" + files.size() + ")");
-                    h.setTextColor(getColor(R.color.cg_blue));
-                    h.setTextSize(14);
-                    h.setPadding(0, (int) (14 * getResources().getDisplayMetrics().density), 0, 0);
-                    att.addView(h);
-                    for (Library.Node f : files) att.addView(item(f.name, v -> openAttachment(f.uri, f.name)));
-                }
-                if (!any) {
-                    TextView none = new TextView(this);
-                    none.setText("Aucune pièce jointe (hors photos, qui sont dans le document Word).");
-                    none.setTextColor(getColor(R.color.text_soft));
-                    att.addView(none);
-                }
+                if (discussion.getVisibility() != View.VISIBLE || ficheEntry != e) return;
+                piecesRows = rows;
+                piecesUris = uris;
+                piecesFolders = folders;
+                renderAttachments();
             });
         });
+    }
+
+    private static final String[][] SUBS = {{"Documents", "Documents"}, {"Videos", "Vidéos"},
+            {"Audio", "Messages vocaux et audio"}, {"Contacts", "Contacts"}, {"Autres", "Autres fichiers"}};
+    private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.FRENCH);
+    private static final DateTimeFormatter DAY_TIME = DateTimeFormatter.ofPattern("d MMM, HH:mm", Locale.FRENCH);
+
+    private Library.Entry ficheEntry;
+    private List<Uri> ficheDocs;
+    /** Document Word choisi sur la fiche (ses pièces jointes seules sont listées), ou {@code null} pour tous. */
+    private String ficheVolume;
+    private List<String[]> piecesRows;
+    private List<Uri> piecesUris;
+    private List<List<Library.Node>> piecesFolders;
+
+    /** Documents Word de la fiche ; toucher l'un l'ouvre et réduit la liste des pièces jointes aux siennes. */
+    private void renderWords() {
+        LinearLayout words = findViewById(R.id.discussion_words);
+        words.removeAllViews();
+        Library.Entry e = ficheEntry;
+        for (int k = 0; k < e.docxNames.size(); k++) {
+            Uri u = ficheDocs.get(k);
+            String name = e.docxNames.get(k);
+            boolean selected = name.equals(ficheVolume);
+            TextView tv = item((selected ? "▶  " : "📄  ") + name.replaceAll("(?i)\\.docx$", ""), v -> {
+                ficheVolume = name;
+                renderWords();
+                renderAttachments();
+                if (u != null) openDocument(u);
+                else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+            });
+            if (selected) tv.setTextColor(getColor(R.color.cg_blue));
+            words.addView(tv);
+        }
+    }
+
+    /** Pièces jointes, par type, dans l'ordre de la discussion, avec le mois en intertitre. */
+    private void renderAttachments() {
+        LinearLayout att = findViewById(R.id.discussion_attachments);
+        att.removeAllViews();
+        if (piecesRows == null) return;
+        float dp = getResources().getDisplayMetrics().density;
+        boolean multi = ficheEntry.docxNames.size() > 1;
+
+        if (ficheVolume != null && multi) {
+            TextView filter = new TextView(this);
+            filter.setText("Pièces jointes de « " + ficheVolume.replaceAll("(?i)\\.docx$", "") + " » — afficher toutes");
+            filter.setTextColor(getColor(R.color.cg_blue));
+            filter.setTextSize(14);
+            filter.setPadding(0, (int) (4 * dp), 0, (int) (4 * dp));
+            filter.setOnClickListener(v -> {
+                ficheVolume = null;
+                renderWords();
+                renderAttachments();
+            });
+            att.addView(filter);
+        }
+
+        boolean any = false;
+        if (!piecesRows.isEmpty()) {
+            for (String[] sub : SUBS) {
+                List<Integer> idx = new ArrayList<>();
+                for (int k = 0; k < piecesRows.size(); k++) {
+                    String[] r = piecesRows.get(k);
+                    if (!r[3].startsWith(sub[0] + "/")) continue;
+                    if (ficheVolume != null && multi && !ficheVolume.equals(r[0])) continue;
+                    idx.add(k);
+                }
+                if (idx.isEmpty()) continue;
+                any = true;
+                att.addView(header(sub[1] + " (" + idx.size() + ")", 16));
+                String lastMonth = null;
+                for (int k : idx) {
+                    String[] r = piecesRows.get(k);
+                    java.time.LocalDateTime t;
+                    try {
+                        t = java.time.LocalDateTime.parse(r[1]);
+                    } catch (RuntimeException ex) {
+                        t = null;
+                    }
+                    if (t != null) {
+                        String month = MONTH.format(t);
+                        month = month.substring(0, 1).toUpperCase(Locale.FRENCH) + month.substring(1);
+                        if (!month.equals(lastMonth)) {
+                            att.addView(header(month, 0));
+                            lastMonth = month;
+                        }
+                    }
+                    String file = r[3].substring(r[3].lastIndexOf('/') + 1);
+                    String when = (t != null ? DAY_TIME.format(t) : "") + (r[2].isEmpty() ? "" : " · " + r[2]);
+                    Uri u = piecesUris.get(k);
+                    att.addView(item(file + "\n" + when, v -> {
+                        if (u != null) openAttachment(u, file);
+                        else Toast.makeText(this, "Fichier introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+                    }));
+                }
+            }
+        } else {
+            // Archive antérieure : liste par dossier, en attendant la prochaine mise à jour de la discussion
+            for (int k = 0; k < SUBS.length && k < piecesFolders.size(); k++) {
+                List<Library.Node> files = piecesFolders.get(k);
+                if (files.isEmpty()) continue;
+                any = true;
+                att.addView(header(SUBS[k][1] + " (" + files.size() + ")", 16));
+                for (Library.Node f : files) att.addView(item(f.name, v -> openAttachment(f.uri, f.name)));
+            }
+            if (any) {
+                TextView note = new TextView(this);
+                note.setText("Après la prochaine mise à jour de cette discussion, les pièces jointes seront classées "
+                        + "par document Word et par mois.");
+                note.setTextColor(getColor(R.color.text_soft));
+                note.setTextSize(13);
+                att.addView(note);
+            }
+        }
+        if (!any) {
+            TextView none = new TextView(this);
+            none.setText(ficheVolume != null && multi ? "Aucune pièce jointe dans ce document (hors photos)."
+                    : "Aucune pièce jointe (hors photos, qui sont dans le document Word).");
+            none.setTextColor(getColor(R.color.text_soft));
+            att.addView(none);
+        }
+    }
+
+    /** Intertitre : type de pièce jointe (grand) ou mois (petit). */
+    private TextView header(String text, int topDp) {
+        float dp = getResources().getDisplayMetrics().density;
+        TextView h = new TextView(this);
+        h.setText(text);
+        h.setTextColor(getColor(topDp > 0 ? R.color.cg_blue : R.color.text_soft));
+        h.setTextSize(topDp > 0 ? 15 : 13);
+        h.setPadding(0, (int) ((topDp > 0 ? topDp : 10) * dp), 0, (int) (2 * dp));
+        return h;
     }
 
     /** Ligne cliquable d'une liste. */

@@ -187,6 +187,24 @@ final class Library {
         return n == null || n.dir ? null : n.uri;
     }
 
+    /** Lit un petit fichier tableau (TSV) d'une discussion ; liste vide s'il n'existe pas. */
+    List<String[]> table(String folder, String rel) {
+        List<String[]> rows = new ArrayList<>();
+        Uri u = fileUri(folder, rel);
+        if (u == null) return rows;
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                ctx.getContentResolver().openInputStream(u), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                rows.add(line.split("\t", -1));
+            }
+        } catch (IOException | RuntimeException e) {
+            rows.clear();
+        }
+        return rows;
+    }
+
     /** Fichiers d'un sous-dossier d'une discussion (« Documents », « Videos »...), triés par nom. */
     List<Node> files(String folder, String sub) {
         List<Node> out = new ArrayList<>();

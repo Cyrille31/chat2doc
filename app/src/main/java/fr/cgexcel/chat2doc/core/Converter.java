@@ -117,6 +117,8 @@ public final class Converter {
     /** Résumé de l'archive (titre, période, nombre de messages, date de mise à jour, nom du document). */
     public static final String SUMMARY = Archive.STATE + "/resume.tsv";
     private static final String VOLUMES = Archive.STATE + "/volumes.tsv";
+    /** Pièces jointes dans l'ordre de la discussion (document Word, date, expéditeur, chemin, type). */
+    public static final String PIECES = Archive.STATE + "/pieces.tsv";
     /** À augmenter quand la mise en page change, pour que les documents existants soient réécrits. */
     private static final String FORMAT_VERSION = "1.7";
 
@@ -325,7 +327,10 @@ public final class Converter {
         }
 
         // Documents Word : un par année (ou un seul) ; seuls ceux dont le contenu a changé sont réécrits
-        ThumbCache cache = new ThumbCache(archive);
+        // Photos réduites pour le Word : gardées seulement le temps de la conversion (pas de doublon des
+        // photos dans l'archive). Les anciennes versions les conservaient dans .chat2doc/vignettes : on les retire.
+        ThumbCache cache = new ThumbCache(new Archive(new File(p.workDir, "vignettes"), null));
+        archive.remove(Archive.STATE + "/vignettes");
         Map<String, List<Message>> byVolume = volumes(p, cache);
         Map<String, String> oldPrints = new HashMap<>();
         Set<String> oldDocs = new HashSet<>();
@@ -377,6 +382,23 @@ public final class Converter {
         Zips.deleteRecursively(tmp);
         for (String old : oldDocs) if (!volumeRows.contains(old)) archive.remove(old); // découpage modifié
         archive.writeTable(VOLUMES, "volume\tdocument\tempreinte\tmessages", rowsVol);
+
+        // Pièces jointes (hors photos) dans l'ordre de la discussion, avec leur document Word :
+        // l'appli les liste ainsi, document par document, mois par mois
+        List<String[]> pieces = new ArrayList<>();
+        int vi = 0;
+        for (List<Message> msgs : byVolume.values()) {
+            String doc = names.get(vi++);
+            for (Message m : msgs) {
+                for (String a : m.attachments) {
+                    MediaFile mf = p.media.get(a.toLowerCase(Locale.ROOT));
+                    if (mf == null || mf.kind.isImage()) continue;
+                    pieces.add(new String[]{doc, m.time.toString(), m.sender == null ? "" : m.sender,
+                            mf.relativePath, mf.kind.name()});
+                }
+            }
+        }
+        archive.writeTable(PIECES, "document\tdate\texpéditeur\tchemin\ttype", pieces);
         String docxName = names.get(names.size() - 1);
         File docx = archive.file(docxName);
 
