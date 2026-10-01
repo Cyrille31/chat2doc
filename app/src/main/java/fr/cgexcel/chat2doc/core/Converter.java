@@ -118,7 +118,7 @@ public final class Converter {
     public static final String SUMMARY = Archive.STATE + "/resume.tsv";
     private static final String VOLUMES = Archive.STATE + "/volumes.tsv";
     /** À augmenter quand la mise en page change, pour que les documents existants soient réécrits. */
-    private static final String FORMAT_VERSION = "1.4";
+    private static final String FORMAT_VERSION = "1.7";
 
     private static final Pattern TITLE_PREFIX = Pattern.compile(
             "^(?:discussion whatsapp avec |whatsapp chat with |whatsapp chat - |whatsapp chat mit |whatsapp-chat mit "

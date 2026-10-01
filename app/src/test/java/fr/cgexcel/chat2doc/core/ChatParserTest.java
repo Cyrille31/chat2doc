@@ -70,6 +70,24 @@ public class ChatParserTest {
     }
 
     @Test
+    public void discussionADeux() {
+        // Dans une discussion à deux, le nom de la discussion est celui du correspondant : ses messages
+        // (photos comprises) ne doivent pas être pris pour des messages système.
+        String txt = String.join("\n",
+                "26/09/2026 11:15 - Sylvie Bayol: IMG-20260926-WA0002.jpg (fichier joint)",
+                "26/09/2026 11:16 - Sylvie Bayol: Bonjour",
+                "26/09/2026 11:17 - Moi: Merci");
+        List<Message> m = new ChatParser(Collections.singletonList("IMG-20260926-WA0002.jpg"), true, "Sylvie Bayol").parse(txt);
+        assertEquals("Sylvie Bayol", m.get(0).sender);
+        assertEquals(1, m.get(0).attachments.size());
+        assertEquals("Sylvie Bayol", m.get(1).sender);
+        // Message système iPhone attribué au nom du groupe
+        List<Message> g = new ChatParser(Collections.<String>emptyList(), true, "Rando")
+                .parse("[20/09/2026 13:58:02] Rando: \u200eMessages and calls are end-to-end encrypted.");
+        assertTrue(g.get(0).isSystem());
+    }
+
+    @Test
     public void ordreDesDatesDeduitDuFichier() {
         // « 03/04 » est ambigu, mais « 04/13 » impose l'ordre mois/jour
         String txt = "03/04/2026 10:00 - A: un\n04/13/2026 10:00 - B: deux";

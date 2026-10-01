@@ -74,6 +74,14 @@ public final class ChatParser {
                     + "|diese nachricht wurde bearbeitet|messaggio modificato)>\\s*$",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
+    /** Messages système (iPhone), reconnus à leur texte. */
+    private static final Pattern SYSTEM_TEXT = Pattern.compile(
+            "chiffrés de bout en bout|end-to-end encrypted|a créé (?:le )?groupe|created (?:the )?group|a ajouté|added "
+                    + "|a retiré|removed |a quitté|\\bleft\\b|a changé|changed (?:the|this|their|group)|admin"
+                    + "|vous avez été ajouté|you were added|a rejoint|joined using|appel (?:vocal|vidéo) manqué"
+                    + "|missed (?:voice|video) call|messages éphémères|disappearing messages|code de sécurité|security code",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+
     private final Map<String, String> filesByLowerName;
     private final boolean dayFirstByDefault;
     private final String chatTitle;
@@ -169,8 +177,11 @@ public final class ChatParser {
                     text = rest.substring(p + 2);
                 }
             }
-            if (sender != null && chatTitle != null && sender.equalsIgnoreCase(chatTitle.trim())) {
-                sender = null; // iPhone : messages système attribués au nom du groupe
+            if (sender != null && chatTitle != null && sender.equalsIgnoreCase(chatTitle.trim())
+                    && SYSTEM_TEXT.matcher(text).find()) {
+                // iPhone : messages système attribués au nom du groupe. Seulement s'ils en ont la forme :
+                // dans une discussion à deux, le nom de la discussion est aussi celui du correspondant.
+                sender = null;
             }
             Message msg = new Message(t, sender, text);
             postProcess(msg);

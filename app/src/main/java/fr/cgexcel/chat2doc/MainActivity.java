@@ -82,7 +82,7 @@ public class MainActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
 
-    private View home, settings, working, done, folderNeeded;
+    private View home, settings, working, done, folderNeeded, discussion;
     private TextView stage, progressDetail, summary, error, folderStatus, savedEmpty;
     private ProgressBar progress;
     private RadioGroup quality, split;
@@ -100,6 +100,8 @@ public class MainActivity extends Activity {
     private volatile String receiveReport;
     private boolean busy;
     private Converter.Result result;
+    /** Adresses, dans le dossier de sauvegarde, des documents Word de la dernière conversion. */
+    private volatile List<Uri> resultUris = new ArrayList<>();
     /** Conversion demandée avant le choix du dossier : reprise dès qu'il est choisi. */
     private List<Uri> pendingUris;
     private String pendingText, pendingSubject;
@@ -115,6 +117,8 @@ public class MainActivity extends Activity {
 
         home = findViewById(R.id.home);
         settings = findViewById(R.id.settings);
+        discussion = findViewById(R.id.discussion);
+        findViewById(R.id.discussion_back).setOnClickListener(v -> showHome());
         working = findViewById(R.id.working);
         done = findViewById(R.id.done);
         folderNeeded = findViewById(R.id.folder_needed);
@@ -203,7 +207,8 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (busy) {
             Toast.makeText(this, "Conversion en cours : touchez « Annuler » pour l’interrompre.", Toast.LENGTH_SHORT).show();
-        } else if (settings.getVisibility() == View.VISIBLE || done.getVisibility() == View.VISIBLE) {
+        } else if (settings.getVisibility() == View.VISIBLE || done.getVisibility() == View.VISIBLE
+                || discussion.getVisibility() == View.VISIBLE) {
             showHome();
         } else {
             super.onBackPressed();
@@ -433,6 +438,9 @@ public class MainActivity extends Activity {
                 if (lib != null) {
                     lib.commit(r.archive, r.folder.getName(), listener);
                     libraryName = lib.name();
+                    List<Uri> uris = new ArrayList<>();
+                    for (String v : r.volumes) uris.add(lib.fileUri(r.folder.getName(), v));
+                    resultUris = uris;
                 }
                 ui.post(() -> finished(r, null));
             } catch (ProgressListener.CancelledException e) {
@@ -602,19 +610,54 @@ public class MainActivity extends Activity {
 
     private void share() {
         if (result == null) return;
-        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.docx);
+        pickResultDocument("Partager quel document ?", this::shareDocument);
+    }
+
+    private void shareDocument(Uri uri) {
         Intent i = new Intent(Intent.ACTION_SEND);
         i.setType(DOCX);
         i.putExtra(Intent.EXTRA_STREAM, uri);
         i.putExtra(Intent.EXTRA_SUBJECT, result.title + " — discussion WhatsApp");
-        i.setClipData(ClipData.newRawUri(result.docx.getName(), uri));
+        i.setClipData(ClipData.newRawUri("document", uri));
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivity(Intent.createChooser(i, getString(R.string.share)));
     }
 
     private void openWord() {
         if (result == null) return;
-        openDocument(FileProvider.getUriForFile(this, getPackageName() + ".fichiers", result.docx));
+        pickResultDocument("Ouvrir quel document ?", this::openDocument);
+    }
+
+    /** Un seul document : action directe ; plusieurs (un par période) : on demande lequel, le plus récent en tête. */
+    private void pickResultDocument(String title, java.util.function.Consumer<Uri> action) {
+        List<String> names = result.volumes;
+        List<Uri> uris = new ArrayList<>();
+        for (int k = 0; k < names.size(); k++) {
+            Uri u = k < resultUris.size() ? resultUris.get(k) : null;
+            File local = new File(result.folder, names.get(k));
+            if (u == null && local.exists()) u = FileProvider.getUriForFile(this, getPackageName() + ".fichiers", local);
+            uris.add(u);
+        }
+        chooseDocument(title, names, uris, action);
+    }
+
+    private void chooseDocument(String title, List<String> names, List<Uri> uris, java.util.function.Consumer<Uri> action) {
+        if (names.size() == 1) {
+            if (uris.get(0) != null) action.accept(uris.get(0));
+            else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] labels = new String[names.size()];
+        for (int k = 0; k < names.size(); k++) labels[k] = names.get(names.size() - 1 - k).replaceAll("(?i)\\.docx$", "");
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(labels, (d, which) -> {
+                    Uri u = uris.get(names.size() - 1 - which);
+                    if (u != null) action.accept(u);
+                    else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Annuler", null)
+                .show();
     }
     private void openDocument(Uri uri) {
         Intent i = new Intent(Intent.ACTION_VIEW);
@@ -661,6 +704,7 @@ public class MainActivity extends Activity {
     private void hideAll() {
         home.setVisibility(View.GONE);
         settings.setVisibility(View.GONE);
+        discussion.setVisibility(View.GONE);
         working.setVisibility(View.GONE);
         done.setVisibility(View.GONE);
         error.setVisibility(View.GONE);
@@ -777,26 +821,102 @@ public class MainActivity extends Activity {
     }
 
     /** Ouvre le document d'une discussion enregistrée ; s'il y en a un par année, demande lequel. */
+    /** Fiche d'une discussion enregistrée : ses documents Word et ses pièces jointes, à ouvrir d'un toucher. */
     private void openSaved(Library.Entry e, List<Uri> docs) {
-        if (docs.size() == 1) {
-            if (docs.get(0) != null) openDocument(docs.get(0));
-            else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
-            return;
+        hideAll();
+        discussion.setVisibility(View.VISIBLE);
+        ((TextView) findViewById(R.id.discussion_title)).setText(e.title);
+        StringBuilder info = new StringBuilder();
+        if (e.first != null && e.last != null) {
+            info.append(DocxWriter.dateFr(e.first.toLocalDate(), false)).append(" → ")
+                    .append(DocxWriter.dateFr(e.last.toLocalDate(), false)).append("\n");
         }
-        String[] labels = new String[docs.size()];
-        for (int k = 0; k < docs.size(); k++) {
-            String n = e.docxNames.get(docs.size() - 1 - k);
-            labels[k] = n.replaceAll("(?i)\\.docx$", "");
+        info.append(count(e.messages, "message", "messages"));
+        if (e.updated != null) {
+            info.append(" · mis à jour le ").append(DocxWriter.dateFr(e.updated.toLocalDate(), false))
+                    .append(" à ").append(HOUR.format(e.updated));
         }
-        new AlertDialog.Builder(this)
-                .setTitle(e.title)
-                .setItems(labels, (d, which) -> {
-                    Uri u = docs.get(docs.size() - 1 - which);
-                    if (u != null) openDocument(u);
-                    else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("Annuler", null)
-                .show();
+        ((TextView) findViewById(R.id.discussion_info)).setText(info);
+
+        LinearLayout words = findViewById(R.id.discussion_words);
+        words.removeAllViews();
+        for (int k = e.docxNames.size() - 1; k >= 0; k--) {
+            Uri u = docs.get(k);
+            words.addView(item("📄  " + e.docxNames.get(k).replaceAll("(?i)\\.docx$", ""), v -> {
+                if (u != null) openDocument(u);
+                else Toast.makeText(this, "Document Word introuvable dans le dossier.", Toast.LENGTH_SHORT).show();
+            }));
+        }
+
+        LinearLayout att = findViewById(R.id.discussion_attachments);
+        att.removeAllViews();
+        TextView loading = new TextView(this);
+        loading.setText("Lecture du dossier…");
+        loading.setTextColor(getColor(R.color.text_soft));
+        att.addView(loading);
+        final String[][] subs = {{"Documents", "Documents"}, {"Videos", "Vidéos"}, {"Audio", "Messages vocaux et audio"},
+                {"Contacts", "Contacts"}, {"Autres", "Autres fichiers"}};
+        worker.execute(() -> {
+            Library lib = Library.open(this);
+            List<List<Library.Node>> lists = new ArrayList<>();
+            for (String[] sub : subs) lists.add(lib == null ? new ArrayList<>() : lib.files(e.folder, sub[0]));
+            ui.post(() -> {
+                if (discussion.getVisibility() != View.VISIBLE) return;
+                att.removeAllViews();
+                boolean any = false;
+                for (int k = 0; k < subs.length; k++) {
+                    List<Library.Node> files = lists.get(k);
+                    if (files.isEmpty()) continue;
+                    any = true;
+                    TextView h = new TextView(this);
+                    h.setText(subs[k][1] + " (" + files.size() + ")");
+                    h.setTextColor(getColor(R.color.cg_blue));
+                    h.setTextSize(14);
+                    h.setPadding(0, (int) (14 * getResources().getDisplayMetrics().density), 0, 0);
+                    att.addView(h);
+                    for (Library.Node f : files) att.addView(item(f.name, v -> openAttachment(f.uri, f.name)));
+                }
+                if (!any) {
+                    TextView none = new TextView(this);
+                    none.setText("Aucune pièce jointe (hors photos, qui sont dans le document Word).");
+                    none.setTextColor(getColor(R.color.text_soft));
+                    att.addView(none);
+                }
+            });
+        });
+    }
+
+    /** Ligne cliquable d'une liste. */
+    private TextView item(String text, View.OnClickListener click) {
+        float dp = getResources().getDisplayMetrics().density;
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(15);
+        tv.setTextColor(getColor(R.color.text_main));
+        tv.setBackgroundResource(R.drawable.card);
+        int pad = (int) (12 * dp);
+        tv.setPadding(pad, pad, pad, pad);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = (int) (6 * dp);
+        tv.setLayoutParams(lp);
+        tv.setOnClickListener(click);
+        return tv;
+    }
+
+    /** Ouvre une pièce jointe avec l'application adaptée (lecteur PDF, vidéo, audio...). */
+    private void openAttachment(Uri uri, String name) {
+        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+        String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+        if (ext.equals("opus")) mime = "audio/ogg";
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(uri, mime != null ? mime : "*/*");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(i);
+        } catch (ActivityNotFoundException ex) {
+            Toast.makeText(this, "Aucune application du téléphone ne sait ouvrir ce fichier.", Toast.LENGTH_LONG).show();
+        }
     }
 
     // ================================================================================================

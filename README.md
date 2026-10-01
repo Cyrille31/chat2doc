@@ -79,6 +79,11 @@ L'écran d'accueil liste les **discussions enregistrées**, avec la période cou
 messages et la date de la dernière mise à jour ; toucher une discussion ouvre son document Word
 (ou propose de choisir parmi ses documents).
 
+Toucher une discussion ouvre sa **fiche** : ses documents Word, et la liste de ses **pièces jointes**
+(PDF, vidéos, messages vocaux, contacts…), qui s'ouvrent d'un toucher dans l'application adaptée du
+téléphone. C'est utile car Word sur Android ne sait pas suivre les liens vers ces fichiers (sur PC,
+les liens du document fonctionnent normalement).
+
 Chaque dossier de discussion contient aussi un sous-dossier caché `.chat2doc` (index des médias,
 photos réduites, aperçus des liens, textes des exports) : à conserver avec le reste.
 

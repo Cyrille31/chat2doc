@@ -28,6 +28,8 @@
     <string name="split_max_after">Mo par document</string>
     <string name="split_note">Les fichiers portent alors le nom des années couvertes (« 2025 - … » ou « 2023-2025 - … »). Une année qui dépasse à elle seule cette taille a son propre document, simplement plus gros. La taille est estimée avant l’écriture.</string>
 
+    <string name="discussion_words">Documents Word</string>
+    <string name="discussion_attachments">Pièces jointes</string>
     <string name="about_title">À propos</string>
     <string name="source_code">Code source sur GitHub</string>
     <string name="back_home">Retour à l’accueil</string>

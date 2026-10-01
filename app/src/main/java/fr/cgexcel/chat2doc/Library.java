@@ -181,6 +181,22 @@ final class Library {
         return out;
     }
 
+    /** Adresse d'un fichier d'une discussion (par exemple un document Word), ou {@code null}. */
+    Uri fileUri(String folder, String name) {
+        Node n = resolve(folder + "/" + name, false);
+        return n == null || n.dir ? null : n.uri;
+    }
+
+    /** Fichiers d'un sous-dossier d'une discussion (« Documents », « Videos »...), triés par nom. */
+    List<Node> files(String folder, String sub) {
+        List<Node> out = new ArrayList<>();
+        Node dir = resolve(folder + "/" + sub, false);
+        if (dir == null || !dir.dir) return out;
+        for (Node n : listing(dir, folder + "/" + sub).values()) if (!n.dir) out.add(n);
+        out.sort((x, y) -> x.name.compareToIgnoreCase(y.name));
+        return out;
+    }
+
     private static LocalDateTime parse(String s) {
         try {
             return s == null || s.isEmpty() ? null : LocalDateTime.parse(s);

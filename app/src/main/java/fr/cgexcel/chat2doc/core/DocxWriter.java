@@ -316,17 +316,21 @@ public final class DocxWriter {
 
             String time = HOUR.format(m.time);
 
-            if (m.isSystem()) {
+            if (m.isSystem() && m.attachments.isEmpty()) {
                 para(w, "C2DSystem", "", run(time + "  ·  " + m.text, ""));
                 lastSender = null;
                 continue;
             }
 
-            String color = senderColors.get(m.sender);
-            boolean newBlock = !m.sender.equals(lastSender)
-                    || (lastTime != null && ChronoUnit.MINUTES.between(lastTime, m.time) >= 60);
-            if (newBlock) {
-                para(w, "C2DSender", "", run(m.sender, "<w:color w:val=\"" + color + "\"/>"));
+            // Un message sans expéditeur reconnu mais avec des pièces jointes reste affiché en entier
+            String color = m.sender == null ? "BFBFBF" : senderColors.get(m.sender);
+            if (color == null) color = PALETTE[0];
+            if (m.sender != null) {
+                boolean newBlock = !m.sender.equals(lastSender)
+                        || (lastTime != null && ChronoUnit.MINUTES.between(lastTime, m.time) >= 60);
+                if (newBlock) {
+                    para(w, "C2DSender", "", run(m.sender, "<w:color w:val=\"" + color + "\"/>"));
+                }
             }
             lastSender = m.sender;
             lastTime = m.time;
